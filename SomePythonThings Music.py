@@ -1,18 +1,24 @@
+#Requirements (Installable quth PyPi): wget, darkdetect, PyQt5, notify-py, qt-thread-updater
+
+    #Windows-specific: Having ffplay and ffprobe on path; and to run on a cmd: 'setx SDL_AUDIODRIVER "directsound"' (Done by the installer)
+
+    #Debian-ubuntu-specific: Having installed "ffmpeg", "libavcodec-extra" (can be done by apt, but the .deb package should do the work.)
+
+    #macOS-specific: Having "ffmpeg" and "ffplay" on the .app file (done automatically)
+
 #Modules
 import os
+import re
 import sys
 import time
 import wget
 import json
-import pydub
 import random
 import platform
 import datetime
 import subprocess
 import webbrowser
 import darkdetect
-import pydub.playback
-import simpleaudio as sa
 from sys import platform as _platform
 from ast import literal_eval
 from PyQt5 import QtWidgets, QtGui, QtCore
@@ -24,8 +30,9 @@ from qt_thread_updater import get_updater
 
 #Globals
 debugging = False
+actualVersion = 1.1
+
 volume = 100
-actualVersion = 1.0
 shuffle = False
 replay = False
 playing = False
@@ -60,7 +67,9 @@ background_picture_path = ''
 settingsWindow = None
 forceClose = False
 goRun=False
+is_win7=False
 canRun=True
+playProcess = None
 settings = { #Default settings loaded, those which change will be overwritten
     "settings_version": actualVersion,
     "minimize_to_tray": False,
@@ -357,15 +366,15 @@ darkModeStyleSheet = """
          color: #EEEEEE;
         border-radius: 3px;
     }}
-
-    QScrollBar
+    
+    QScrollBar 
     {{
-        background-color: rgba(0, 100, 100, 1.0);
+        background-color: rgba(0, 0, 0, 0.0);
     }}
 
     QScrollBar:vertical
     {{
-        background-color: rgb(10, 150, 150);
+        background-color: rgba(10, 150, 150, 1);
     }}
 
     QScrollBar::handle:vertical 
@@ -599,309 +608,6 @@ darkModeStyleSheet = """
     }}
 """
 
-#Functions
-def log(s, force=True):
-    global debugging
-    if(debugging or "WARN" in str(s) or "FAILED" in str(s) or not(force)):
-        print((time.strftime('[%H:%M:%S] ', time.gmtime(time.time())))+str(s))
-
-def notify(title, body, icon='icon-sptmusic.png'):
-    global realpath
-    notify=False
-    if _platform == 'win32':
-        if int(platform.release()) >= 10:
-            notify=True
-    elif _platform == 'darwin':
-        notify=False
-    elif _platform == 'linux' or _platform=='linux2':
-        notify=True
-    if(notify):
-        try:
-            notification = Notify()
-            notification.title = str(title)
-            notification.message = str(body)
-            try:
-                notification.icon = realpath+'/'+icon
-            except:
-                pass
-            notification.send(block=True)
-        except Exception as e:
-            log("[  FAILED ] Unable to show notification: "+str(e))
-
-def checkUpdates_py():
-    global music, actualVersion
-    try:
-        response = urlopen("http://www.somepythonthings.tk/versions/music.ver")
-        response = response.read().decode("utf8")
-        if float(response.split("///")[0]) > actualVersion:
-            get_updater().call_in_main(askUpdates, response)
-        else:
-            log("[   OK   ] No updates found")
-            return 'No'
-    except Exception as e:
-        if debugging:
-            raise e
-        log("[  WARN  ] Unacble to reach http://www.somepythonthings.tk/versions/music.ver. Are you connected to the internet?")
-        return 'Unable'
-
-def askUpdates(response):
-    notify("SomePythonThings Music Updater", "SomePythonThings Music has a new update!\nActual version: {0}\nNew version: {1}".format(actualVersion, response.split("///")[0]))
-    if QtWidgets.QMessageBox.Yes == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music', "There are some updates available for SomePythonThings Music:\nYour version: "+str(actualVersion)+"\nNew version: "+str(response.split("///")[0])+"\nNew features: \n"+response.split("///")[1]+"\nDo you want to download and install them?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes):
-
-        #                'debian': debian link in posotion 2                  'win32' Windows 32bits link in position 3           'win64' Windows 64bits in position 4                   'macos' macOS 64bits INTEL in position 5
-        downloadUpdates({'debian': response.split("///")[2].replace('\n', ''), 'win32': response.split("///")[3].replace('\n', ''), 'win64': response.split("///")[4].replace('\n', ''), 'macos':response.split("///")[5].replace('\n', '')})
-    else:
-        log("[  WARN  ] User aborted update!")
-
-def downloadUpdates(links):
-    log('[   OK   ] Reached downloadUpdates. Download links are "{0}"'.format(links))
-    if _platform == 'linux' or _platform == 'linux2':  # If the OS is linux
-        log("[   OK   ] platform is linux, starting auto-update...")
-        throw_info("SomePythonThings Updater", "The new version is going to be downloaded and installed automatically. \nThe installation time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nPlease DO NOT kill the program until the update is done, because it may corrupt the executable files.\nClick OK to start downloading.")
-        t = Thread(target=download_linux, args=(links,))
-        t.daemon = True
-        t.start()
-    elif _platform == 'win32':  # if the OS is windows
-        log('win32')
-        url = ""
-        if(platform.architecture()[0] == '64bit'):  # if OS is 64bits
-            url = (links["win64"])
-        else:  # is os is not 64bits
-            url = (links['win32'])
-        log(url)
-        get_updater().call_in_main(throw_info, "SomePythonThings Update", "The new version is going to be downloaded and prepared for the installation. \nThe download time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nClick OK to continue.")
-        t = Thread(target=download_win, args=(url,))
-        t.daemon=True
-        t.start()
-    elif _platform == 'darwin':
-        log("[   OK   ] platform is macOS, starting auto-update...")
-        throw_info("SomePythonThings Updater", "The new version is going to be downloaded and installed automatically. \nThe installation time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nPlease DO NOT kill the program until the update is done, because it may corrupt the executable files.\nClick OK to start downloading.")
-        t = Thread(target=download_macOS, args=(links,))
-        t.daemon=True
-        t.start()
-    else:  # If os is unknown
-        webbrowser.open_new('https://www.somepythonthings.tk/programs/somepythonthings-music/')
-
-def download_win(url):
-    try:
-        global texts
-        os.system('cd %windir%\\..\\ & mkdir SomePythonThings')
-        time.sleep(0.01)
-        os.chdir("{0}/../SomePythonThings".format(os.environ['windir']))
-        installationProgressBar('Downloading')
-        filedata = urlopen(url)
-        datatowrite = filedata.read()
-        filename = ""
-        with open("{0}/../SomePythonThings/SomePythonThings-Music-Updater.exe".format(os.environ['windir']), 'wb') as f:
-            f.write(datatowrite)
-            filename = f.name
-        installationProgressBar('Launching')
-        log(
-            "[   OK   ] file downloaded to C:\\SomePythonThings\\{0}".format(filename))
-        get_updater().call_in_main(launch_win, filename)
-    except Exception as e:
-        if debugging:
-            raise e
-        get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred while downloading the SomePythonTings Music installer. Please check your internet connection and try again later\n\nError Details:\n{0}".format(str(e)))
-
-def launch_win(filename):
-    try:
-        installationProgressBar('Launching')
-        throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Updater.exe. Then follow the on-screen instructions.")
-        os.system('start /B {0}'.format(filename))
-        get_updater().call_in_main(sys.exit)
-        sys.exit()
-    except Exception as e:
-        if debugging:
-            raise e
-        throw_error("SomePythonThings Music Updater", "An error occurred while launching the SomePythonTings Music installer.\n\nError Details:\n{0}".format(str(e)))
-
-def download_linux(links):
-    get_updater().call_in_main(installationProgressBar, 'Downloading')
-    p1 = os.system('cd; rm somepythonthings-music_update.deb; wget -O "somepythonthings-music_update.deb" {0}'.format(links['debian']))
-    if(p1 == 0):  # If the download is done
-        get_updater().call_in_main(install_linux_part1)
-    else:  # If the download is falied
-        get_updater().call_in_main(throw_error, "SomePythonThings", "An error occurred while downloading the update. Check your internet connection. If the problem persists, try to download and install the program manually.")
-        webbrowser.open_new('https://www.somepythonthings.tk/programs/somepythonthings-music/')
-
-def install_linux_part1(again=False):
-    global music
-    installationProgressBar('Installing')
-    time.sleep(0.2)
-    if not again:
-        passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "Please write your password to perform the update. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-    else:
-        passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-    t = Thread(target=install_linux_part2, args=(passwd, again))
-    t.start()
-
-def install_linux_part2(passwd, again=False):
-    installationProgressBar('Installing')
-    #get_updater().call_in_main(texts["create"].setPlainText, "The program is being installed. Please wait until the installation process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
-    #get_updater().call_in_main(texts["extract"].setPlainText, "The program is being installed. Please wait until the installation process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
-    p1 = os.system('cd; echo "{0}" | sudo -S apt install ./"somepythonthings-music_update.deb" -y'.format(passwd))
-    if(p1 == 0):  # If the installation is done
-        p2 = os.system('cd; rm "./somepythonthings-music_update.deb"')
-        if(p2 != 0):  # If the downloaded file cannot be removed
-            log("[  WARN  ] Could not delete update file.")
-        installationProgressBar('Installing')
-        get_updater().call_in_main(throw_info,"SomePythonThings Music Updater","The update has been applied succesfully. Please reopen the application")
-        get_updater().call_in_main(sys.exit)
-        sys.exit()
-    else:  # If the installation is falied on the 1st time
-        if not again:
-            get_updater().call_in_main(install_linux_part1, True)
-        else:
-            installationProgressBar('Stop')
-            get_updater().call_in_main(throw_error, "SomePythonThings Music Updater", "Unable to apply the update. Please try again later.")
-
-def download_macOS(links):
-    try:
-        installationProgressBar('Downloading')
-        #get_updater().call_in_main(texts["create"].setPlainText, "The installer is being downloaded. Please wait until the download process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
-        #get_updater().call_in_main(texts["extract"].setPlainText, "The installer is being downloaded. Please wait until the download process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
-        p1 = os.system('cd; rm somepythonthings-music_update.dmg')
-        if(p1!=0):
-            log("[  WARN  ] unable to delete somepythonthings-music_update.dmg")
-            #raise SystemError("Unable to delete somepythonthings-music_update.dmg, process exit code "+str(p1))
-        print(links['macos'])
-        wget.download(links['macos'], out='{0}/somepythonthings-music_update.dmg'.format(os.path.expanduser('~')))
-        get_updater().call_in_main(install_macOS)
-        log("[   OK   ] Download is done, starting launch process.")
-    except Exception as e:
-        if debugging:
-            raise e
-        get_updater().call_in_main(throw_error,"SomePythonThings Music Updater", "An error occurred while downloading the update. Check your internet connection. If the problem persists, try to download and install the program manually.\n\nError Details:\n"+str(e))
-        webbrowser.open_new('https://www.somepythonthings.tk/programs/somepythonthings-music/')
-
-def install_macOS():
-    installationProgressBar('Launching')
-    time.sleep(0.2)
-    #get_updater().call_in_main(texts["create"].setPlainText, "Please follow on-screen instructions to continue")
-    #get_updater().call_in_main(texts["extract"].setPlainText, "Please follow on-screen instructions to continue")
-    throw_info("SomePythonThings Music Updater", "The update file has been downloaded successfully. When you click OK, SomePythonThings Music is going to be closed and a DMG file will automatically be opened. Then, you'll need to drag the application on the DMG to the applications folder (also on the DMG). Click OK to continue")
-    p2 = os.system('cd; open ./"somepythonthings-music_update.dmg"')
-    log("[  INFO  ] macOS installation unix output code is \"{0}\"".format(p2))
-    sys.exit()
-
-def install_ffmpeg_linux_part1(again=False):
-    global music
-    if(QtWidgets.QMessageBox.Ok == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music Assistant', "SomePythoThings Music needs to install the following packages in order to run: \"ffmpeg\", \"libavcodec-extra\"\nIf you click OK, SomePythonThings Music will download and install the required packages.", QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel, QtWidgets.QMessageBox.Ok)):
-        installationProgressBar('Installing')
-        time.sleep(0.2)
-        if not again:
-            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "Please write your password to perform the ffmpeg installation. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-        else:
-            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-        t = Thread(target=install_ffmpeg_linux_part2, args=(passwd, again))
-        t.start()
-
-def install_ffmpeg_linux_part2(passwd, again=False):
-    installationProgressBar('Installing')
-    p1 = os.system('cd; echo "{0}" | sudo -S apt install ffmpeg libavcodec-extra -y'.format(passwd))
-    if(p1 == 0):  # If the installation is done
-        installationProgressBar('Installing')
-        get_updater().call_in_main(throw_info,"SomePythonThings Music Assistant","Ffmpeg was installed successfully. Please restart the application")
-        get_updater().call_in_main(sys.exit)
-        sys.exit()
-    else:  # If the installation is falied on the 1st time
-        if not again:
-            get_updater().call_in_main(install_ffmpeg_linux_part1, True)
-        else:
-            installationProgressBar('Stop')
-            get_updater().call_in_main(throw_error, "SomePythonThings Music Assistant", "Unable to apply the update. Please try again later.")
-
-def download_ffpmeg_win():
-    try:
-        response = urlopen("http://www.somepythonthings.tk/resources/ffmpeg-win.res")
-        url = response.read().decode("utf8")
-        global texts
-        os.system('cd %windir%\\..\\ & mkdir SomePythonThings')
-        time.sleep(0.01)
-        get_updater().call_in_main(throw_info, 'SomePythonThings Music', 'SomePythonThings Music needs ffmpeg to be installed on your computer in order to run. \nFfmpeg is going to be downloaded and prepared for the installation. Please wait until the download is finished.\nPress OK to continue')
-        os.chdir("{0}/../SomePythonThings".format(os.environ['windir']))
-        installationProgressBar('Downloading')
-        filedata = urlopen(url)
-        datatowrite = filedata.read()
-        filename = ""
-        with open("{0}/../SomePythonThings/SomePythonThings-Music-Ffmpeg-Installer.exe".format(os.environ['windir']), 'wb') as f:
-            f.write(datatowrite)
-            filename = f.name
-        installationProgressBar('Launching')
-        log("[   OK   ] file downloaded to C:\\SomePythonThings\\{0}".format(filename))
-        get_updater().call_in_main(launch_ffmpeg_win, filename)
-    except Exception as e:
-        if debugging:
-            raise e
-        get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred while downloading the SomePythonTings Music installer. Please check your internet connection and try again later\n\nError Details:\n{0}".format(str(e)))
-
-def launch_ffmpeg_win(filename):
-    try:
-        installationProgressBar('Launching')
-        throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Ffmpeg-Installer.exe. Then follow the on-screen instructions.")
-        os.system('start /B {0}'.format(filename))
-        get_updater().call_in_main(sys.exit)
-        sys.exit()
-    except Exception as e:
-        if debugging:
-            raise e
-        throw_error("SomePythonThings Music Updater", "An error occurred while launching the Ffmpeg installer.\n\nError Details:\n{0}".format(str(e)))
-
-def download_ffmpeg_macOS():
-    get_updater().call_in_main(throw_info, 'SomePythonThings Music Assistant', "SomePythonThings Music needs ffmpeg in order to play music. Ffmpeg installer is going to be downloaded and installed. Click OK to continue.")
-    url = "https://www.somepythonthings.tk/resources/ffmpeg-mac.res"
-    os.chdir(os.path.expanduser('~'))
-    installationProgressBar()
-    filename = wget.download(url, out="resources.res")
-    file = open(filename, 'r')
-    url = file.read()
-    file.close()
-    os.system('cd; rm resources.res')
-    os.system('cd; rm {0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~')))
-    filename = wget.download(url, out='{0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~')))
-    print(filename)
-    print(os.path.expanduser('~'))
-    get_updater().call_in_main(ask_ffmpeg_macOS)
-
-def ask_ffmpeg_macOS():
-    if(QtWidgets.QMessageBox.Ok == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music Assistant', "SomePythoThings Music needs to install ffmpeg in order to run\nIf you click OK, SomePythonThings Music will download and install the required packages.", QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel, QtWidgets.QMessageBox.Ok)):
-        install_ffmpeg_macOS_part1()
-    else:
-        throw_warning('SomePythonThings Music', "If you don't install ffmpeg, SomePythonThings Music will not work!")
-        installationProgressBar('Stop')
-
-
-def install_ffmpeg_macOS_part1(again=False):
-    global music
-    installationProgressBar('Installing')
-    time.sleep(0.2)
-    if not again:
-        passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "Please write your password to perform the ffmpeg installation. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-    else:
-        passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-    t = Thread(target=install_ffmpeg_macOS_part2, args=(passwd, again))
-    t.start()
-
-def install_ffmpeg_macOS_part2(passwd, again=False):
-    installationProgressBar('Installing')
-    try:
-        subprocess.run('cd; echo "{0}" | sudo -S installer -pkg "{1}" -target / -allowUntrusted && echo "Done!"'.format(passwd, '{0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~'))), shell=True, check=True)
-        installationProgressBar(action='Stop')
-        installationProgressBar('Installing')
-        get_updater().call_in_main(throw_info,"SomePythonThings Music Assistant","Ffmpeg was installed successfully. Please restart the application")
-        get_updater().call_in_main(sys.exit)
-        sys.exit()
-    except:  # If the installation is falied on the 1st time
-        if not again:
-            get_updater().call_in_main(install_ffmpeg_macOS_part1, True)
-        else:
-            installationProgressBar('Stop')
-            get_updater().call_in_main(throw_error, "SomePythonThings Music Assistant", "Unable to apply the update. Please try again later.")
-
-
-
-
 def getWindowStyleScheme():
     global settings, realpath, background_picture_path
     mode = 'auto'
@@ -936,6 +642,341 @@ def getWindowStyleScheme():
     else:
         return darkModeStyleSheet.format(font, background_picture_path)
 
+   
+#Essential functions
+def run(s):
+    if(is_win7):
+        log('[   OK   ] Running subprocess as win7_8...')
+        return os.system(s)
+    else:
+        log('[   OK   ] Running subprocess as non win7_8...')
+        process =  subprocess.Popen(s.split(' '), shell=(_platform=='win32'), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+        process.communicate()
+        process.stdin.close()
+        process.wait()
+        return process.returncode
+
+def log(s, force=True):
+    global debugging
+    if(debugging or "WARN" in str(s) or "FAILED" in str(s) or not(force)):
+        print((time.strftime('[%H:%M:%S] ', time.gmtime(time.time())))+str(s))
+
+def notify(title, body, icon='icon-sptmusic.png'):
+    global realpath
+    notify=False
+    if _platform == 'win32':
+        if int(platform.release()) >= 10:
+            notify=True
+    elif _platform == 'darwin':
+        notify=False
+    elif _platform == 'linux' or _platform=='linux2':
+        notify=True
+    if(notify):
+        try:
+            notification = Notify()
+            notification.title = str(title)
+            notification.message = str(body)
+            try:
+                notification.icon = realpath+'/'+icon
+            except:
+                pass
+            notification.send(block=True)
+        except Exception as e:
+            log("[  FAILED ] Unable to show notification: "+str(e))
+
+if(True):#Updates and dependencies
+    def checkUpdates_py():
+        global music, actualVersion
+        try:
+            response = urlopen("http://www.somepythonthings.tk/versions/music.ver")
+            response = response.read().decode("utf8")
+            if float(response.split("///")[0]) > actualVersion:
+                get_updater().call_in_main(askUpdates, response)
+            else:
+                log("[   OK   ] No updates found")
+                return 'No'
+        except Exception as e:
+            if debugging:
+                raise e
+            log("[  WARN  ] Unacble to reach http://www.somepythonthings.tk/versions/music.ver. Are you connected to the internet?")
+            return 'Unable'
+
+    def askUpdates(response):
+        notify("SomePythonThings Music Updater", "SomePythonThings Music has a new update!\nActual version: {0}\nNew version: {1}".format(actualVersion, response.split("///")[0]))
+        if QtWidgets.QMessageBox.Yes == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music', "There are some updates available for SomePythonThings Music:\nYour version: "+str(actualVersion)+"\nNew version: "+str(response.split("///")[0])+"\nNew features: \n"+response.split("///")[1]+"\nDo you want to download and install them?", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.Yes):
+
+            #                'debian': debian link in posotion 2                  'win32' Windows 32bits link in position 3           'win64' Windows 64bits in position 4                   'macos' macOS 64bits INTEL in position 5
+            downloadUpdates({'debian': response.split("///")[2].replace('\n', ''), 'win32': response.split("///")[3].replace('\n', ''), 'win64': response.split("///")[4].replace('\n', ''), 'macos':response.split("///")[5].replace('\n', '')})
+        else:
+            log("[  WARN  ] User aborted update!")
+
+    def downloadUpdates(links):
+        log('[   OK   ] Reached downloadUpdates. Download links are "{0}"'.format(links))
+        if _platform == 'linux' or _platform == 'linux2':  # If the OS is linux
+            log("[   OK   ] platform is linux, starting auto-update...")
+            throw_info("SomePythonThings Updater", "The new version is going to be downloaded and installed automatically. \nThe installation time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nPlease DO NOT kill the program until the update is done, because it may corrupt the executable files.\nClick OK to start downloading.")
+            t = Thread(target=download_linux, args=(links,))
+            t.daemon = True
+            t.start()
+        elif _platform == 'win32':  # if the OS is windows
+            log('win32')
+            url = ""
+            if(platform.architecture()[0] == '64bit'):  # if OS is 64bits
+                url = (links["win64"])
+            else:  # is os is not 64bits
+                url = (links['win32'])
+            log(url)
+            get_updater().call_in_main(throw_info, "SomePythonThings Update", "The new version is going to be downloaded and prepared for the installation. \nThe download time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nClick OK to continue.")
+            t = Thread(target=download_win, args=(url,))
+            t.daemon=True
+            t.start()
+        elif _platform == 'darwin':
+            log("[   OK   ] platform is macOS, starting auto-update...")
+            throw_info("SomePythonThings Updater", "The new version is going to be downloaded and installed automatically. \nThe installation time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nPlease DO NOT kill the program until the update is done, because it may corrupt the executable files.\nClick OK to start downloading.")
+            t = Thread(target=download_macOS, args=(links,))
+            t.daemon=True
+            t.start()
+        else:  # If os is unknown
+            webbrowser.open_new('https://www.somepythonthings.tk/programs/somepythonthings-music/')
+
+    def download_win(url):
+        try:
+            global texts
+            os.system('cd %windir%\\..\\ & mkdir SomePythonThings')
+            time.sleep(0.01)
+            os.chdir("{0}/../SomePythonThings".format(os.environ['windir']))
+            installationProgressBar('Downloading')
+            filedata = urlopen(url)
+            datatowrite = filedata.read()
+            filename = ""
+            with open("{0}/../SomePythonThings/SomePythonThings-Music-Updater.exe".format(os.environ['windir']), 'wb') as f:
+                f.write(datatowrite)
+                filename = f.name
+            installationProgressBar('Launching')
+            log(
+                "[   OK   ] file downloaded to C:\\SomePythonThings\\{0}".format(filename))
+            get_updater().call_in_main(launch_win, filename)
+        except Exception as e:
+            if debugging:
+                raise e
+            get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred while downloading the SomePythonTings Music installer. Please check your internet connection and try again later\n\nError Details:\n{0}".format(str(e)))
+
+    def launch_win(filename):
+        try:
+            installationProgressBar('Launching')
+            throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Updater.exe. Then follow the on-screen instructions.")
+            os.system('start /B {0}'.format(filename))
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
+            get_updater().call_in_main(sys.exit)
+            sys.exit()
+        except Exception as e:
+            if debugging:
+                raise e
+            throw_error("SomePythonThings Music Updater", "An error occurred while launching the SomePythonTings Music installer.\n\nError Details:\n{0}".format(str(e)))
+
+    def download_linux(links):
+        get_updater().call_in_main(installationProgressBar, 'Downloading')
+        p1 = os.system('cd; rm somepythonthings-music_update.deb; wget -O "somepythonthings-music_update.deb" {0}'.format(links['debian']))
+        if(p1 == 0):  # If the download is done
+            get_updater().call_in_main(install_linux_part1)
+        else:  # If the download is falied
+            get_updater().call_in_main(throw_error, "SomePythonThings", "An error occurred while downloading the update. Check your internet connection. If the problem persists, try to download and install the program manually.")
+            webbrowser.open_new('https://www.somepythonthings.tk/programs/somepythonthings-music/')
+
+    def install_linux_part1(again=False):
+        global music
+        installationProgressBar('Installing')
+        time.sleep(0.2)
+        if not again:
+            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "Please write your password to perform the update. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+        else:
+            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+        t = Thread(target=install_linux_part2, args=(passwd, again))
+        t.start()
+
+    def install_linux_part2(passwd, again=False):
+        installationProgressBar('Installing')
+        #get_updater().call_in_main(texts["create"].setPlainText, "The program is being installed. Please wait until the installation process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
+        #get_updater().call_in_main(texts["extract"].setPlainText, "The program is being installed. Please wait until the installation process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
+        p1 = os.system('cd; echo "{0}" | sudo -S apt install ./"somepythonthings-music_update.deb" -y'.format(passwd))
+        if(p1 == 0):  # If the installation is done
+            p2 = os.system('cd; rm "./somepythonthings-music_update.deb"')
+            if(p2 != 0):  # If the downloaded file cannot be removed
+                log("[  WARN  ] Could not delete update file.")
+            installationProgressBar('Installing')
+            get_updater().call_in_main(throw_info,"SomePythonThings Music Updater","The update has been applied succesfully. Please reopen the application")
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
+            get_updater().call_in_main(sys.exit)
+            sys.exit()
+        else:  # If the installation is falied on the 1st time
+            if not again:
+                get_updater().call_in_main(install_linux_part1, True)
+            else:
+                installationProgressBar('Stop')
+                get_updater().call_in_main(throw_error, "SomePythonThings Music Updater", "Unable to apply the update. Please try again later.")
+
+    def download_macOS(links):
+        try:
+            installationProgressBar('Downloading')
+            #get_updater().call_in_main(texts["create"].setPlainText, "The installer is being downloaded. Please wait until the download process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
+            #get_updater().call_in_main(texts["extract"].setPlainText, "The installer is being downloaded. Please wait until the download process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
+            p1 = os.system('cd; rm somepythonthings-music_update.dmg')
+            if(p1!=0):
+                log("[  WARN  ] unable to delete somepythonthings-music_update.dmg")
+                #raise SystemError("Unable to delete somepythonthings-music_update.dmg, process exit code "+str(p1))
+            wget.download(links['macos'], out='{0}/somepythonthings-music_update.dmg'.format(os.path.expanduser('~')))
+            get_updater().call_in_main(install_macOS)
+            log("[   OK   ] Download is done, starting launch process.")
+        except Exception as e:
+            if debugging:
+                raise e
+            get_updater().call_in_main(throw_error,"SomePythonThings Music Updater", "An error occurred while downloading the update. Check your internet connection. If the problem persists, try to download and install the program manually.\n\nError Details:\n"+str(e))
+            webbrowser.open_new('https://www.somepythonthings.tk/programs/somepythonthings-music/')
+
+    def install_macOS():
+        installationProgressBar('Launching')
+        time.sleep(0.2)
+        #get_updater().call_in_main(texts["create"].setPlainText, "Please follow on-screen instructions to continue")
+        #get_updater().call_in_main(texts["extract"].setPlainText, "Please follow on-screen instructions to continue")
+        throw_info("SomePythonThings Music Updater", "The update file has been downloaded successfully. When you click OK, SomePythonThings Music is going to be closed and a DMG file will automatically be opened. Then, you'll need to drag the application on the DMG to the applications folder (also on the DMG). Click OK to continue")
+        p2 = os.system('cd; open ./"somepythonthings-music_update.dmg"')
+        log("[  INFO  ] macOS installation unix output code is \"{0}\"".format(p2))
+        try:        
+            killFfplay()
+        except AttributeError:
+            pass
+        sys.exit()
+
+    def install_ffmpeg_linux_part1(again=False):
+        global music
+        if(QtWidgets.QMessageBox.Ok == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music Assistant', "SomePythoThings Music needs to install the following packages in order to run: \"ffmpeg\", \"libavcodec-extra\"\nIf you click OK, SomePythonThings Music will download and install the required packages.", QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel, QtWidgets.QMessageBox.Ok)):
+            installationProgressBar('Installing')
+            time.sleep(0.2)
+            if not again:
+                passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "Please write your password to perform the ffmpeg installation. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+            else:
+                passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+            t = Thread(target=install_ffmpeg_linux_part2, args=(passwd, again))
+            t.start()
+
+    def install_ffmpeg_linux_part2(passwd, again=False):
+        installationProgressBar('Installing')
+        p1 = os.system('cd; echo "{0}" | sudo -S apt install ffmpeg libavcodec-extra -y'.format(passwd))
+        if(p1 == 0):  # If the installation is done
+            installationProgressBar('Installing')
+            get_updater().call_in_main(throw_info,"SomePythonThings Music Assistant","Ffmpeg was installed successfully. Please restart the application")
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
+            get_updater().call_in_main(sys.exit)
+            sys.exit()
+        else:  # If the installation is falied on the 1st time
+            if not again:
+                get_updater().call_in_main(install_ffmpeg_linux_part1, True)
+            else:
+                installationProgressBar('Stop')
+                get_updater().call_in_main(throw_error, "SomePythonThings Music Assistant", "Unable to apply the update. Please try again later.")
+
+    def download_ffpmeg_win():
+        try:
+            response = urlopen("http://www.somepythonthings.tk/resources/ffmpeg-win.res")
+            url = response.read().decode("utf8")
+            global texts
+            run('cd %windir%\\..\\ & mkdir SomePythonThings')
+            time.sleep(0.01)
+            get_updater().call_in_main(throw_info, 'SomePythonThings Music', 'SomePythonThings Music needs ffmpeg to be installed on your computer in order to run. \nFfmpeg is going to be downloaded and prepared for the installation. Please wait until the download is finished.\nPress OK to continue')
+            os.chdir("{0}/../SomePythonThings".format(os.environ['windir']))
+            installationProgressBar('Downloading')
+            filedata = urlopen(url)
+            datatowrite = filedata.read()
+            filename = ""
+            with open("{0}/../SomePythonThings/SomePythonThings-Music-Ffmpeg-Installer.exe".format(os.environ['windir']), 'wb') as f:
+                f.write(datatowrite)
+                filename = f.name
+            installationProgressBar('Launching')
+            log("[   OK   ] file downloaded to C:\\SomePythonThings\\{0}".format(filename))
+            get_updater().call_in_main(launch_ffmpeg_win, filename)
+        except Exception as e:
+            if debugging:
+                raise e
+            get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred while downloading the SomePythonTings Music installer. Please check your internet connection and try again later\n\nError Details:\n{0}".format(str(e)))
+
+    def launch_ffmpeg_win(filename):
+        try:
+            installationProgressBar('Launching')
+            throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Ffmpeg-Installer.exe. Then follow the on-screen instructions.")
+            run('start /B {0}'.format(filename))
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
+            get_updater().call_in_main(sys.exit)
+            sys.exit()
+        except Exception as e:
+            if debugging:
+                raise e
+            throw_error("SomePythonThings Music Updater", "An error occurred while launching the Ffmpeg installer.\n\nError Details:\n{0}".format(str(e)))
+
+    def download_ffmpeg_macOS():
+        get_updater().call_in_main(throw_info, 'SomePythonThings Music Assistant', "SomePythonThings Music needs ffmpeg in order to play music. Ffmpeg installer is going to be downloaded and installed. Click OK to continue.")
+        url = "https://www.somepythonthings.tk/resources/ffmpeg-mac.res"
+        os.chdir(os.path.expanduser('~'))
+        installationProgressBar()
+        filename = wget.download(url, out="resources.res")
+        file = open(filename, 'r')
+        url = file.read()
+        file.close()
+        os.system('cd; rm resources.res')
+        os.system('cd; rm {0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~')))
+        wget.download(url, out='{0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~')))
+        get_updater().call_in_main(ask_ffmpeg_macOS)
+
+    def ask_ffmpeg_macOS():
+        if(QtWidgets.QMessageBox.Ok == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music Assistant', "SomePythoThings Music needs to install ffmpeg in order to run\nIf you click OK, SomePythonThings Music will download and install the required packages.", QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel, QtWidgets.QMessageBox.Ok)):
+            install_ffmpeg_macOS_part1()
+        else:
+            throw_warning('SomePythonThings Music', "If you don't install ffmpeg, SomePythonThings Music will not work!")
+            installationProgressBar('Stop')
+
+    def install_ffmpeg_macOS_part1(again=False):
+        global music
+        installationProgressBar('Installing')
+        time.sleep(0.2)
+        if not again:
+            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "Please write your password to perform the ffmpeg installation. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+        else:
+            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+        t = Thread(target=install_ffmpeg_macOS_part2, args=(passwd, again))
+        t.start()
+
+    def install_ffmpeg_macOS_part2(passwd, again=False):
+        installationProgressBar('Installing')
+        try:
+            subprocess.run('cd; echo "{0}" | sudo -S installer -pkg "{1}" -target / -allowUntrusted && echo "Done!"'.format(passwd, '{0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~'))), shell=True, check=True)
+            installationProgressBar(action='Stop')
+            installationProgressBar('Installing')
+            get_updater().call_in_main(throw_info,"SomePythonThings Music Assistant","Ffmpeg was installed successfully. Please restart the application")
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
+            get_updater().call_in_main(sys.exit)
+            sys.exit()
+        except:  # If the installation is falied on the 1st time
+            if not again:
+                get_updater().call_in_main(install_ffmpeg_macOS_part1, True)
+            else:
+                installationProgressBar('Stop')
+                get_updater().call_in_main(throw_error, "SomePythonThings Music Assistant", "Unable to apply the update. Please try again later.")
+
+#Program functions
 def toStyleMainList():
     global playing, lists, trackNumber, music, font, t
     try:
@@ -953,6 +994,14 @@ def toStyleMainList():
         t.daemon = True
         t.start()
 
+def killFfplay():
+    if(_platform=='win32'):
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        subprocess.call(["taskkill", "/IM", "ffplay.exe", "/T", "/F"], shell=True, startupinfo=si, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    else:
+        playProcess.kill()
+
 def removeFromPlaylist():
     global lists, files, trackNumber, justContinue, passedTime
     trackToRemove = lists['main'].currentRow()
@@ -968,7 +1017,25 @@ def removeFromPlaylist():
         log('[   OK   ] Actual playlist:'+str(files))
     else:
         log('[  WARN  ] No song selected to detete!')
-    
+
+def playFile(file, time=0):
+    global playProcess, volume
+    try:
+        killFfplay()
+    except AttributeError:
+        pass
+    _volume = int(volume)
+    if(muted):
+        _volume=0
+    if(_platform=='win32'):
+        _volume = int(volume/10)
+    playProcess = None
+    loglevel = 'quiet'
+    if(debugging):
+        loglevel='verbose'
+    log('[        ] Play command is '+ str(['ffplay', '-ss', str(time), '-autoexit', '-volume', str(_volume), '-loglevel', loglevel, '-nodisp', '-i', '"'+file+'"']))
+    playProcess = subprocess.Popen(['ffplay', '-ss', str(time), '-autoexit', '-volume', str(_volume), '-loglevel', loglevel, '-nodisp', '-i', file], shell=(_platform=='win32'))
+
 def toShuffle():
     global shuffle, buttons
     if(shuffle):
@@ -1136,9 +1203,13 @@ def toStrictlyPlay(track=0):
         toPlay(track=track)
 
 def toStrictlyPause():
-    global playing
+    global playing, playProcess
     if(playing):
         toPlay()
+        try:
+            killFfplay()
+        except AttributeError:
+            pass
 
 def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', mode='auto'):
     global defaultSettings
@@ -1295,7 +1366,26 @@ def saveAndCloseSettings(modeSelector, traySelector, settingsWindow):
     saveSettings(silent=False, minimize_to_tray=settings['minimize_to_tray'], bakcgroundPicture=settings['bakcgroundPicture'], mode=settings['mode'])
 
 def getLenght(file):
-    return pydub.AudioSegment.from_file(file).duration_seconds
+    global debugging
+    if(_platform=='win32'):
+        process = subprocess.Popen(['ffmpeg',  '-i', file], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        stdout, stderr = process.communicate()
+        match = re.search(b"Duration:\s{1}(?P<hours>\d+?):(?P<minutes>\d+?):(?P<seconds>\d+\.\d+?),", stdout, re.DOTALL)
+        if match:
+            matches = match.groupdict()
+        else:
+            matches = {}
+        try:
+            return float(float(matches['seconds'].decode("utf-8"))+float(matches['minutes'].decode("utf-8"))*60+float(matches['hours'].decode("utf-8"))*3600)
+        except KeyError as e:
+            if(debugging):
+                raise e
+    else:
+        metadata = subprocess.check_output(['ffprobe', '-i', file, '-v', 'quiet', '-print_format', 'json', '-show_format', '-hide_banner'])
+        metadata = json.loads(metadata)
+        return float(metadata['format']['duration'])
+
+
 
 def getFileType(file): #from file.mp3, returns MP3, from file.FiLeExT, returns FILEEXT 
     return file.split('.')[-1].upper()
@@ -1303,31 +1393,30 @@ def getFileType(file): #from file.mp3, returns MP3, from file.FiLeExT, returns F
 def getSongTitle(file):
     return str(file.replace('\\', '/').split('/')[-1])
 
-def play_with_simpleaudio(seg):
-    return sa.play_buffer(
-        seg.raw_data,
-        num_channels=seg.channels,
-        bytes_per_sample=seg.sample_width,
-        sample_rate=seg.frame_rate
-    )
-
 def startPlayback(track=0):
-    global files, labels, skipped, playerIsRunning, goBack, playing, trackNumber, replay, lastConvertedTrack, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, playedTime, song_length
+    global files, labels, skipped, playerIsRunning, playProcess, goBack, playing, trackNumber, replay, lastConvertedTrack, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, playedTime, song_length
     playerIsRunning = True
     stopped=False
+    skipped=False
+    goBack = False
     passedTime = 0.0
+    alreadyPlayed = []
     if(isinstance(track, int)):
         trackNumber=track
     else:
         trackNumber=0
     lastConvertedTrack = ''
-    songToPlay = ''
+    #songToPlay = ''
     try:
         if(len(files) == 0):
             #get_updater().call_in_main(toPlay, True)
             playerIsRunning = False
             replay = False
             toStrictlyPause()
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
             sys.exit()
         while trackNumber<len(files):
             log('[        ] Starting new play round, index is {0}'.format(str(trackNumber)))
@@ -1340,23 +1429,19 @@ def startPlayback(track=0):
                 get_updater().call_in_main(labels['totaltime'].setText, str(datetime.timedelta(seconds=int(song_length))))
                 filename=getSongTitle(track)
                 get_updater().call_latest(labels['songname'].setText, filename)
-                if(not(lastConvertedTrack == getSongTitle(track))):
-                    log('[   OK   ] Converting playback to Numpy...')
-                    songToPlay = pydub.AudioSegment.from_file(track)
-                    lastConvertedTrack = getSongTitle(track)
-                else:
-                    log('[  WARN  ] Song already converted to NumPy Array!')
                 log('[        ] Start time is {0} ms'.format(passedTime*1000))
-                playingObj = play_with_simpleaudio(songToPlay[int(passedTime*1000):].fade_in(100).fade_out(100)-getVolume())
+                playFile(track, time=passedTime)
                 log('[   OK   ] Playing (play line is passed)')
+                alreadyPlayed.append(trackNumber)
                 buttons['play'].setStyleSheet("background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/pause-icon.svg\") 0 0 0 0 stretch stretch")
                 toStyleMainList()
                 import time
                 starttime = time.time()
-                totalTime = getLenght(track)-passedTime
+                lenght = getLenght(track)
+                totalTime = lenght-passedTime
                 pausedAt = 0
                 playedTime = 0
-                while(playingObj.is_playing()):
+                while(True):
                     firsttime = time.time()
                     playedTime = time.time()-starttime+passedTime
                     get_updater().call_in_main(labels['actualtime'].setText, str(datetime.timedelta(seconds=int(playedTime))))
@@ -1366,28 +1451,42 @@ def startPlayback(track=0):
                         #get_updater().call_in_main(sliders['seeker'].setValue, playedTime*1000/(totalTime+passedTime))
                     time.sleep(0.05 - 0*(time.time()-firsttime))
                     if(not(playing)):
-                        playingObj.stop()
+                        killFfplay()
                         pausedAt = time.time()-starttime+passedTime
                         log('[   OK   ] Paused at moment {}'.format((time.time()-starttime)))
                         stopped=True
                         while not(playing):
                             continue
                         log('[        ] Continuing playback...')
+                        break
                     if(skipped):
                         log('[        ] Skipping...')
-                        playingObj.stop()
+                        killFfplay()
+                        break
                     if(goBack):
                         log('[        ] Going back...')
-                        playingObj.stop()
+                        killFfplay()
+                        break
                     if(justContinue):
-                        playingObj.stop()
+                        killFfplay()
                         log('[        ] Passing away...')
+                        break
+                    if(lenght<=playedTime):
+                        log('[  KILL  ] Killing play bucle...')
+                        break
                 if(skipped):
                     log('[   OK   ] Skipped')
                     if not(shuffle):
                         trackNumber += 1
                     else:
+                        oldTrackNumber = trackNumber
                         trackNumber = random.randint(0, len(files))
+                        if(len(alreadyPlayed) >= len(files)):
+                            toStrictlyPause()
+                            alreadyPlayed = []
+                        else:
+                            while ((oldTrackNumber==trackNumber and len(files)>1) or trackNumber in alreadyPlayed) and not replay:
+                                trackNumber = random.randint(0, len(files))
                     passedTime = 0.0
                     skipped=False
                     continue
@@ -1413,7 +1512,14 @@ def startPlayback(track=0):
                     if not(shuffle):
                         trackNumber += 1
                     else:
+                        oldTrackNumber = trackNumber
                         trackNumber = random.randint(0, len(files))
+                        if(len(alreadyPlayed) >= len(files)):
+                            toStrictlyPause()
+                            alreadyPlayed = []
+                        else:
+                            while ((oldTrackNumber==trackNumber and len(files)>1) or trackNumber in alreadyPlayed) and not replay:
+                                trackNumber = random.randint(0, len(files))
                     passedTime = 0.0
                 else:
                     log('[   OK   ] Catched previous stop, setting start time...')
@@ -1431,10 +1537,14 @@ def startPlayback(track=0):
                 get_updater().call_in_main(toPlay, True)
         playerIsRunning = False
     except Exception as e:
+        try:        
+            killFfplay()
+        except AttributeError:
+            pass
         playerIsRunning = False
         playing = True
         get_updater().call_in_main(toPlay, True)
-        get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred during the playback.\n\nPlease consider re-installing ffmpeg by clicking on \"Settings\" menu > \"Re-install ffmpeg\"\n\nError details:\""+str(e))
+        get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred during the playback.\n\nIs the file corrupt or incompatible?\n\nIf the error persists, please consider re-installing ffmpeg by clicking on \"Settings\" menu > \"Re-install ffmpeg\"")
         if(debugging):
             raise e
 
@@ -1494,8 +1604,7 @@ def savePlaylist():
 
 
 
- ###
- """
+ ###\n"""
                 for element in files:
                     toWrite += str(element)
                     toWrite += "\n"
@@ -1512,8 +1621,20 @@ def savePlaylist():
             raise e
         throw_error('SomePythonThings Music', 'Unable to save playlist.\n\nError details:\n'+str(e))
 
+def removeAllItems():
+    global lists, files
+    while len(files)>0:
+        try:
+            files.remove(files[0])
+            lists['main'].removeItemWidget(lists['main'].takeItem(0))
+        except Exception as e:
+            if(debugging):
+                raise e
+
 def openPlaylist(playlist=''):
     global files, music, elementNumber
+    toStrictlyPause()
+    removeAllItems()
     log('[        ] Playlist attribute value is {0}'.format(playlist))
     playAfter = False
     try:
@@ -1535,7 +1656,7 @@ def openPlaylist(playlist=''):
         file.close()
         try:
             if(len(content.split("###"))<2):
-                raise FileTypeNotSupported('This platlist file is not a valid .sptplaylist file!')
+                raise NotImplementedError('This platlist file is not a valid .sptplaylist file!')
             for songFile in content.split("###")[1].split('\n'):
                 if(songFile!=''):
                     addFile(songFile)
@@ -1600,6 +1721,10 @@ def throw_info(title, body, icon="icon-sptmusic-128.png", exit=False):
     msg.setWindowTitle(title)
     msg.exec_()
     if(exit):
+        try:        
+            killFfplay()
+        except AttributeError:
+            pass
         sys.exit()
 
 def throw_warning(title, body, warning=None):
@@ -1632,6 +1757,10 @@ def quitMusic():
     log("[  INFO  ] Quitting application...")
     global music
     music.close()
+    try:        
+        killFfplay()
+    except AttributeError:
+        pass
     sys.exit()
 
 def checkDirectUpdates():
@@ -1646,11 +1775,11 @@ def openHelp():
     webbrowser.open_new("http://www.somepythonthings.tk/programs/somepythonthings-music/help/")
 
 def about():
-    throw_info("About SomePythonThings Music", "SomePythonThings Music\nVersion "+str(actualVersion)+"\n\nThe SomePythonThings Project\n\n © 2020 SomePythonThings\nhttps://www.somepythonthings.tk\n\n\nThe iconset has a CC Atribution 4.0 License", exit=False)
+    throw_info("About SomePythonThings Music", "SomePythonThings Music\nVersion "+str(actualVersion)+"\n\nThe SomePythonThings Project\n\n © 2020 Martí Climent, SomePythonThings\nhttps://www.somepythonthings.tk\n\n\nThe iconset has a CC Non-Commercial Atribution 4.0 License", exit=False)
 
 def checkForDependencies(bypassCheck=False):
     if(_platform == 'win32'):
-        if(os.system('ffmpeg -version')!=0 or os.system('ffplay -version')!=0 or os.system('ffprobe -version')!=0 or bypassCheck):
+        if(run('ffmpeg -version')!=0 or run('ffplay -version')!=0 or bypassCheck):#or run('ffprobe -version')!=0 
             log('[  WARN  ] FFMPEG not found!')
             t = Thread(target=download_ffpmeg_win)
             t.daemon = True
@@ -1658,7 +1787,7 @@ def checkForDependencies(bypassCheck=False):
         else:
             log('[   OK   ] FFMPEG library found')
     elif(_platform=="linux" or _platform=='linux2'):
-        if(os.system('ffmpeg -version')!=0 or os.system('ffplay -version')!=0 or os.system('ffprobe -version')!=0 or bypassCheck):
+        if(os.system('ffmpeg -version')!=0 or os.system('ffplay -version')!=0 or bypassCheck):#or os.system('ffprobe -version')!=0 
             get_updater().call_in_main(install_ffmpeg_linux_part1)
             log('[  WARN  ] FFMPEG not found!')
         else:
@@ -1669,68 +1798,141 @@ def checkForDependencies(bypassCheck=False):
             t.daemon = True
             t.start()
 
+def readArgs(args):
+    global t, playerIsRunning
+    try:
+        t.kill()
+    except AttributeError as e:
+        if(debugging):
+            log(e)
+    toStrictlyPause()
+    removeAllItems()
+    log('[  ARGS  ] Re-reading args...')
+    isThereAFile = False
+    i = 0
+    if(len(args)>1):
+        if('SPTPLAYLIST' == getFileType(args[1])):
+            openPlaylist(args[1])
+            isThereAFile = True
+            log('[   OK   ] 1st argument appears to be a playlist...')
+        else:
+            while i<len(args):
+                log('[        ] Detected arguments, checking if they are valid...')
+                arg = args[i]
+                if(os.path.isfile(arg) and not (getFileType(arg) in 'PYEXELNK')):
+                    addFile(arg)
+                    isThereAFile = True
+                    log('[   OK   ] Argument {0} added successfully'.format(arg))
+                else:
+                    log('[  WARN  ] Argument {0} is not a valid file!'.format(arg))
+                i += 1
+    if(isThereAFile):
+        playerIsRunning = False
+        toStrictlyPlay()
+
 def setProgramAsRunning():
     global defaultSettings, goRun, canRun
-    if(os.path.exists(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/running.lock')):
-        os.remove(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/running.lock')
-        time.sleep(0.5)
+    try:
+        os.remove(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/show.lock')
+    except PermissionError:
+        pass
+    except FileNotFoundError:
+        pass
+    try:
         if(os.path.exists(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/running.lock')):
-            with open(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/show.lock', mode='a'): pass
-            log('[  WARN  ] SomePythonThings Music Already running!')
-            goRun=True
-            canRun=False
-            return 0
+            try:
+                os.remove(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/running.lock')
+            except PermissionError:
+                pass
+            time.sleep(0.5)
+            if(os.path.exists(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/running.lock')):
+                with open(os.path.expanduser('~').replace('\\', '/')+'/.SomePythonThings/Music/show.lock', mode='a'): pass
+                args=""
+                for element in sys.argv:
+                    args += element+'///'
+                args=args[:-3]
+                try:
+                    f = open('sys.argv', 'w')
+                    f.write(args)
+                    f.close()
+                except Exception as e:
+                    if(debugging):
+                        raise e
+                log('[  WARN  ] SomePythonThings Music Already running!')
+                goRun=True
+                canRun=False
+                return 0
+            else:
+                goRun=True
+                canRun=True
+                log('[   OK   ] SomePythonThings Music not running.')
         else:
             goRun=True
             canRun=True
             log('[   OK   ] SomePythonThings Music not running.')
-    else:
-        goRun=True
-        canRun=True
-        log('[   OK   ] SomePythonThings Music not running.')
-    while True:
-        try:
-            os.chdir(os.path.expanduser('~'))
+    except PermissionError:
+        pass
+    except:
+        setProgramAsRunning()
+    if(canRun):
+        while True:
             try:
-                os.chdir('.SomePythonThings')
-            except FileNotFoundError:
-                log("[  WARN  ] Can't acces .SomePythonThings folder, creating .SomePythonThings...")
-                os.mkdir(".SomePythonThings")
-                os.chdir('.SomePythonThings')
-            try:
-                os.chdir('Music')
-            except FileNotFoundError:
-                log("[  WARN  ] Can't acces Music folder, creating Music...")
-                os.mkdir("Music")
-                os.chdir('Music')
-            try:
-                if(not(os.path.exists('running.lock'))):
-                    with open('running.lock', mode='a'): pass
-                if(os.path.exists('show.lock')):
-                    log('[        ] Showing SomePythonThimgs Music...')
-                    try:
-                        music.show()
-                        music.raise_()
-                        music.activateWindow()
-                        os.remove('show.lock')
-                    except:
-                        os.remove('show.lock')
+                os.chdir(os.path.expanduser('~'))
+                try:
+                    os.chdir('.SomePythonThings')
+                except FileNotFoundError:
+                    log("[  WARN  ] Can't acces .SomePythonThings folder, creating .SomePythonThings...")
+                    os.mkdir(".SomePythonThings")
+                    os.chdir('.SomePythonThings')
+                try:
+                    os.chdir('Music')
+                except FileNotFoundError:
+                    log("[  WARN  ] Can't acces Music folder, creating Music...")
+                    os.mkdir("Music")
+                    os.chdir('Music')
+                try:
+                    if(not(os.path.exists('running.lock'))):
+                        with open('running.lock', mode='a'): pass
+                    if(os.path.exists('show.lock')):
+                        log('[        ] Showing SomePythonThimgs Music...')
+                        try:
+                            get_updater().call_in_main(music.show)
+                            get_updater().call_in_main(music.raise_)
+                            get_updater().call_in_main(music.activateWindow)
+                            get_updater().call_in_main(music.showNormal)
+                            os.remove('show.lock')
+                            time.sleep(0.1)
+                            log('[        ] Searching for passed args...')
+                            try:
+                                f = open('sys.argv', 'r')
+                                args = f.read().split('///')
+                                f.close()
+                                log('[        ] found args are "{}"...'.format(str(args)))
+                                #readArgs(args)
+                                get_updater().call_in_main(readArgs, args)
+                                os.remove('sys.argv')
+                            except Exception as e:
+                                if(debugging):
+                                    raise e
+                            break
+                        except:
+                            try:
+                                os.remove('show.lock')
+                            except PermissionError:
+                                pass
+                except Exception as e:
+                    if(debugging):
+                        raise e
             except Exception as e:
                 if(debugging):
                     raise e
-        except Exception as e:
-            if(debugging):
-                raise e
-        time.sleep(0.3)
+            time.sleep(0.3)
+        setProgramAsRunning()
 
 def on_key(key):
     global volume, sliders
     if key == QtCore.Qt.Key_Space:
         toPlay(finalized=False)
-    elif key == QtCore.Qt.Key_Down:
-        sliders['volume'].setValue(sliders['volume'].value()-10)
-    elif key == QtCore.Qt.Key_Up:
-        sliders['volume'].setValue(sliders['volume'].value()+10)
     elif key == QtCore.Qt.Key_Minus:
         sliders['volume'].setValue(sliders['volume'].value()-10)
     elif key == QtCore.Qt.Key_Plus:
@@ -1739,6 +1941,24 @@ def on_key(key):
         sliders['seeker'].setValue(sliders['seeker'].value()-10)
     elif key == QtCore.Qt.Key_Right:
         sliders['seeker'].setValue(sliders['seeker'].value()+10)
+    elif key == QtCore.Qt.Key_Backspace:
+        removeFromPlaylist()
+    elif key == QtCore.Qt.Key_Delete:
+        removeFromPlaylist()
+    elif key == QtCore.Qt.Key_Enter:
+        goToSong()
+    elif key == QtCore.Qt.Key_Play:
+        toPlay()
+    elif key == QtCore.Qt.Key_Pause:
+        toPlay()
+    elif key == QtCore.Qt.Key_MediaPlay:
+        toPlay()
+    elif key == QtCore.Qt.Key_MediaPause:
+        toPlay()
+    elif key == QtCore.Qt.Key_MediaPrevious:
+        toGoBack()
+    elif key == QtCore.Qt.Key_MediaNext:
+        toSkip()
     #else:
     #   log('key pressed: %i' % key)
 
@@ -1790,7 +2010,7 @@ def resizeWidgets():
 
 # main code
 if __name__ == '__main__':
-    
+
     Thread(target=setProgramAsRunning, daemon=True).start()
 
     if(len(sys.argv)>1):
@@ -1805,6 +2025,7 @@ if __name__ == '__main__':
         log("[   OK   ] OS detected is linux")
         realpath="/bin/resources-sptmusic"
         font = "Ubuntu"
+        music_files = ("All files (*.*)")
 
     elif _platform == "darwin":
         log("[   OK   ] OS detected is macOS")
@@ -1817,6 +2038,7 @@ if __name__ == '__main__':
             log("[   OK   ] OS detected is win32 release 10 ")
         else:# os is windows 7/8
             font="Segoe UI"#"Consolas"
+            is_win7=True
             log("[   OK   ] OS detected is win32 release 8 or less ")
         if(os.path.exists("\\Program Files\\SomePythonThingsMusic\\resources-sptmusic")):
             realpath = "/Program Files/SomePythonThingsMusic/resources-sptmusic"
@@ -1853,16 +2075,32 @@ if __name__ == '__main__':
             ui = Ui_MainWindow()
             ui.setupUi(self)
             self.resized.connect(resizeWidgets)
-
+            self.installEventFilter(self)
+            
         def resizeEvent(self, event):
             self.resized.emit()
             return super(Window, self).resizeEvent(event)
-        
+
         def keyReleaseEvent(self, event):
-            super(Window, self).keyReleaseEvent(event)
-            self.keyRelease.emit(event.key())
+            log('[ EVENTS ] keyRelease activated.')
+            if(not(event.key()==QtCore.Qt.Key_Up) and not(event.key()==QtCore.Qt.Key_Down)):
+                lists['main'].clearFocus()
+                buttons['play'].clearFocus()
+                buttons['replay'].clearFocus()
+                buttons['shuffle'].clearFocus()
+                buttons['last-track'].clearFocus()
+                buttons['first-track'].clearFocus()
+                sliders['volume'].clearFocus()
+                sliders['seeker'].clearFocus()
+                super(Window, self).keyReleaseEvent(event)
+                self.keyRelease.emit(event.key())
+        
+        def _focusInEvent(self):
+            log('[ EVENTS ] focusInEvent activated.')
+            #self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, False)
         
         def closeEvent(self, event):
+            log('[ EVENTS ] closeEvent activated.')
             global forceClose
             if(settings['minimize_to_tray'] and not(forceClose)):
                 music.hide()
@@ -1871,6 +2109,15 @@ if __name__ == '__main__':
             else:
                 event.accept()
                 forceClose = False
+        
+        def eventFilter(self, object, event):
+            try:
+                if event.type() == QtCore.QEvent.WindowActivate or event.type() == QtCore.QEvent.FocusIn:
+                    self._focusInEvent()
+            except KeyboardInterrupt:
+                pass
+            return False
+        
 
     
 
@@ -1887,6 +2134,8 @@ if __name__ == '__main__':
             self._run()
         def globaltrace(self, frame, event, arg): 
             return self.localtrace if event == 'call' else None
+        def kill(self):
+            self.shouldBeRuning = False
         def localtrace(self, frame, event, arg): 
             if not(self.shouldBeRuning) and event == 'line':
                 global playingObj
@@ -1899,8 +2148,6 @@ if __name__ == '__main__':
                 raise SystemExit() 
             return self.localtrace
 
-    class FileTypeNotSupported(Exception):
-        pass
 
     QtWidgets.QApplication.setStyle('fusion')
     app = QtWidgets.QApplication(sys.argv)
@@ -2035,8 +2282,6 @@ if __name__ == '__main__':
         fileMenu.addAction(hideMusicAction)
 
 
-
-
         playbackMenu = menuBar.addMenu("Playback")
         playAction = QtWidgets.QAction("Play    ", music)
         playAction.triggered.connect(toStrictlyPlay)
@@ -2148,15 +2393,13 @@ if __name__ == '__main__':
         updatesAction = QtWidgets.QAction("Check for updates", music)
         updatesAction.triggered.connect(checkDirectUpdates)
         helpMenu.addAction(updatesAction)
-
-
         
         showMusicAction = QtWidgets.QAction("Show SomePythonThigs Music ", music)
         showMusicAction.triggered.connect(music.show)
         trayMenu.addAction(showMusicAction)
 
         quitMusicAction = QtWidgets.QAction("Quit SomePythonThigs Music ", music)
-        quitMusicAction.triggered.connect(sys.exit)
+        quitMusicAction.triggered.connect(quitMusic)
         trayMenu.addAction(quitMusicAction)
         if(len(sys.argv)>1):
             if('runanyway' in sys.argv[1].lower()):
@@ -2183,6 +2426,7 @@ if __name__ == '__main__':
             if(len(sys.argv)>1):
                 if('SPTPLAYLIST' == getFileType(sys.argv[1])):
                     openPlaylist(sys.argv[1])
+                    isThereAFile = True
                     log('[   OK   ] 1st argument appears to be a playlist...')
                 else:
                     while i<len(sys.argv):
@@ -2196,7 +2440,7 @@ if __name__ == '__main__':
                             log('[  WARN  ] Argument {0} is not a valid file!'.format(arg))
                         i += 1
             if(isThereAFile):
-                toPlay()
+                toStrictlyPlay()
             dependenciesThread = Thread(target=checkForDependencies)
             dependenciesThread.daemon = True
             dependenciesThread.start()
@@ -2204,10 +2448,28 @@ if __name__ == '__main__':
         else:
             tray.setVisible(False)
             log('[  EXIT  ] Exiting...')
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
             sys.exit()
+    except KeyboardInterrupt:
+        pass
     except Exception as e:
         if not debugging:
             throw_error("Fatal Error!", "SomePythonThings Music crashed by a fatal error. If it's the first time you see that, just reopen the program. If it's not the first time, please mail me at somepythonthingschannel@gmail.com and send me the details of the error (This would be very helpful ;D )\n\nException details: \nException Type: {0}\n\nException Arguments:\n{1!r}".format(type(e).__name__, e.args)+"\n\nException Comments:\n"+str(e))
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
         else:
+            try:        
+                killFfplay()
+            except AttributeError:
+                pass
             raise e
+    try:        
+        killFfplay()
+    except AttributeError:
+        pass
     log('[  EXIT  ] Reached end of the script')
