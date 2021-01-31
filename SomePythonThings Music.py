@@ -1,102 +1,110 @@
-#Requirements (Installable quth PyPi): wget, darkdetect, PyQt5, notify-py, qt-thread-updater
-
-    #Windows-specific: Having ffplay and ffprobe on path; and to run on a cmd: 'setx SDL_AUDIODRIVER "directsound"' (Done by the installer)
-
-    #Debian-ubuntu-specific: Having installed "ffmpeg", "libavcodec-extra" (can be done by apt, but the .deb package should do the work.)
-
-    #macOS-specific: Having "ffmpeg" and "ffplay" on the .app file (done automatically)
-
-#Modules
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ------------------------------------------------------------------------------- Required Modules ------------------------------------------------------------------------------ #
 import os
-import re
 import sys
 import time
+import glob
 import wget
 import json
 import random
+import mutagen
 import platform
+import tempfile
 import datetime
+import traceback
 import subprocess
 import webbrowser
 import darkdetect
 from sys import platform as _platform
 from ast import literal_eval
-from PyQt5 import QtWidgets, QtGui, QtCore
-from notifypy import Notify
+from pytube import YouTube
+from PySide2 import QtWidgets, QtGui, QtCore, QtMultimedia
 from functools import partial
 from threading import Thread
 from urllib.request import urlopen
+from moviepy.editor import VideoFileClip
 from qt_thread_updater import get_updater
+from youtubesearchpython import VideosSearch
 
-#Globals
+
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ------------------------------------------------------------------------------------ Globals ---------------------------------------------------------------------------------- #
 debugging = False
-actualVersion = 1.1
+actualVersion = 2.0
 
-volume = 100
-shuffle = False
-replay = False
-playing = False
-muted = False
-skipped = False
-goBack = False
-font = ""
-realpath = "."
 music_files = ('Common Media Files (*.wav; *.mp3; *.pcm; *.aiff; *.aac; *.ogg; *.wma; *.flac);;Other media files (*.*)')
-files = []
+music_extensions = ['*.wav', '*.mp3', '*.pcm', '*.aiff', '*.aac', '*.ogg', '*.wma', '*.flac']
 buttons = {}
 texts = {}
 progressbars = {}
 lists = {}
 labels = {}
 sliders = {}
-playerIsRunning = False
-t = None # t will be defined after KillableThread class definition
-elementNumber = 0
-trackNumber = 0
-playingObj = None
-justContinue = False
-lastConvertedTrack = ''
-totalTime = 0
-passedTime = 0
+
+canRun=True
 seeking = True
+
+justContinue = False
+playerIsRunning = False
+logBlocked = False
 seekerValueManuallyChanged = False
-starttime = 0 
-playedTime = 0
-song_length = 0
-background_picture_path = ''
-settingsWindow = None
 forceClose = False
 goRun=False
 is_win7=False
-canRun=True
+blockPlay = False
+shuffle = False
+replay = False
+playing = False
+muted = False
+skipped = False
+goBack = False
+
 playProcess = None
-settings = { #Default settings loaded, those which change will be overwritten
-    "settings_version": actualVersion,
-    "minimize_to_tray": False,
-    "bakcgroundPicture":"None",
-    "mode":'auto',
-    }
+settingsWindow = None
+t = None # t will be defined after KillableThread class definition
+playingObj = None
+
+volume = 100
+totalTime = 0
+passedTime = 0
+starttime = 0 
+song_length = 0
+elementNumber = 0
+trackNumber = 0
+
+background_picture_path = ''
+logHistory = ""
+font = ""
+realpath = "."
+
 defaultSettings = {
     "settings_version": actualVersion,
     "minimize_to_tray": False,
+    "volume": 100,
+    "showTrackNotification": True,
+    "showEndNotification": True,
     "bakcgroundPicture":"None",
     "mode":'auto',
 }
 
-#StyleSheets:
-lightModeStyleSheet = """
-    * {{
-        color: #000000;
-        font-size:14px;
-        font-family:{0};
-        background-color: #FFFFFF;
-    }}
+settings = defaultSettings.copy() # Default settings loaded, those which change will be overwritten
 
-    #centralwidget {{
+
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ----------------------------------------------------------------------------- Stylesheets related ----------------------------------------------------------------------------- #
+lightModeStyleSheet = """
+    * 
+    {{
+        color: #000000;
+        font-size:12px;
+        font-family:{0};
+    }}
+    #centralwidget
+    {{
         border-image: url(\"{1}\") 0 0 0 0 stretch stretch;
     }}
-
-    QPushButton {{
+    QPushButton
+    {{
         border-image: none;
         background-color:  rgba(15, 140, 140, 1.0);
         width: 100px;
@@ -104,102 +112,110 @@ lightModeStyleSheet = """
         color: #FFFFFF;
         border-radius: 3px;
     }}
-
-    QScrollBar
+    QScrollBar 
     {{
-        background-color: rgb(30, 200, 200);
+        background-color: rgba(0, 0, 0, 0.0);
     }}
-
-    QScrollBar:vertical
-    {{
-        background-color: rgb(30, 200, 200);
-    }}
-
-    QScrollBar::handle:vertical 
+    QScrollBar::handle:vertical
     {{
         margin-top: 17px;
         margin-bottom: 17px;
         border: none;
         min-height: 30px;
-        background-color: rgba(255, 255, 255, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(255, 255, 255);
+        background-color: rgba(255, 255, 255, 0.5);
     }}
-
-    QScrollBar::add-line:vertical 
-    {{
-        border: none;
-        background-color: rgba(255, 255, 255, 1);
-    }}
-
-    QScrollBar::sub-line:vertical 
-    {{
-        border: none;
-        background-color: rgba(255, 255, 255, 1);
-    }}
-
-    QScrollBar:horizontal
-    {{
-        background: rgb(30, 200, 200);
-    }}
-
-    QScrollBar::handle:horizontal 
+    QScrollBar::handle:horizontal
     {{
         margin-left: 17px;
         margin-right: 17px;
         border: none;
         min-width: 30px;
-        background-color: rgba(255, 255, 255, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(255, 255, 255);
+        background-color: rgba(255, 255, 255, 0.5);
     }}
-
-    QScrollBar::add-line:horizontal 
+    QScrollBar::add-line 
     {{
         border: none;
-        background-color: rgba(255, 255, 255, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(255, 255, 255);
+        background-color: rgba(255, 255, 255, 0.5);
     }}
-
-    QScrollBar::sub-line:horizontal 
+    QScrollBar::sub-line 
     {{
         border: none;
-        background-color: rgba(255, 255, 255, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(255, 255, 255);
+        background-color: rgba(255, 255, 255, 0.5);
     }}
-
+    QScrollBar::corner
+    {{
+        background-color: none;
+    }}
     QLabel
     {{   
         border-image: none;
         padding: 3px;
         background-color: none;
-        
     }}
-
     QComboBox
     {{   
         border-image: none;
-        selection-background-color: rgb(0, 0, 0);
+        selection-background-color: rgb(255, 255, 255);
         margin:0px;
         border: 1px solid black;
-        background-color: rgba(0, 0, 0, 0.5);
+        background-color: rgba(255, 255, 255, 0.5);
         border-radius: 3px;
         border-top-left-radius: 0px;
         border-top-right-radius: 0px;
         border-top:0px;
         padding-left: 7px;
     }}
-    QAbstractItemView {{
+    QSpinBox
+    {{
+        border: 1px solid white;
+        selection-background-color: rgba(255, 255, 255, 0.7);
+        background-color: rgba(255, 255, 255, 0.5);
+        border-radius: 3px;
+        border-top-left-radius: 0px;
+        border-bottom-left-radius: 0px;
+        padding-left: 7px;
+    }}
+    QSpinBox::up-button
+    {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+    }}
+    QSpinBox::down-button
+    {{
+        subcontrol-origin: padding;
+        subcontrol-position: bottom right;
+    }}
+    QSpinBox::up-arrow
+    {{
+        width: 16px;
+        height: 16px;
+    }}
+    QAbstractItemView
+    {{
         background-color: rgb(255, 255, 255);
         margin: 0px;
         border-radius: 3px;
     }}
-
-    QMenuBar {{
+    QMenuBar
+    {{
         background-color: #FFFFFF;
         color: #000000;
     }}
-
-    QMenu {{
+    QMenu
+    {{
         background-color: #FFFFFF;
         border-radius: 10px;
     }}
-
-    QMenu::item {{
+    QMenu::item
+    {{
         border: 3px solid #FFFFFF;
         padding-right: 10px;
         padding-left: 5px;
@@ -207,111 +223,177 @@ lightModeStyleSheet = """
         color: #000000;
         padding-left: 8px;
     }}
-
-    QMenu::item:selected {{
+    QMenu::item:selected
+    {{
         border: 3px solid rgba(20, 170, 170, 1.0);
         background-color: rgba(20, 170, 170, 1.0);
     }}
-    QMenuBar::item {{
+    QMenuBar::item
+    {{
         background-color: #FFFFFF;
         border: 3px solid  #FFFFFF;
         padding-right: 5px;
         padding-left: 5px;
     }}
-
-    QMenuBar::item:selected {{
+    QMenuBar::item:selected
+    {{
         background-color: rgba(20, 170, 170, 1.0);
         border: 3px solid rgba(20, 170, 170, 1.0);
     }}
-
-    QSlider {{
+    QSlider
+    {{
         background-color: none;
     }}
-
-    QSlider::handle:horizontal {{
+    QSlider::groove
+    {{
+        background: rgba(255, 255, 255, 0.0);
+        height: 6px;
+        border: 1px solid white;
+        border-radius: 4px;
+        left: 8px;
+        right: 8px;
+    }}
+    QSlider::handle
+    {{
+        height: 12px;
+        margin: -5px 0;
+        width: 13px;
         border-radius: 7px;
         background-color: rgba(20, 170, 170, 1.0);/*20, 170, 170, 1.0*/
-        border: 0px solid rgba(00, 100, 100, 1.0);
+        border: 1px solid rgba(00, 100, 100, 1.0);
     }}
-
-    QSlider::add-page:horizontal {{
+    QLineEdit
+    {{
+        selection-background-color: rgba(255, 255, 255, 0.4);
+        border-radius: 3px;
+        border: 1px solid rgb(255, 255, 255);
+        background-color: rgba(255, 255, 255, 0.4);
+        color: black;
+    }}
+    QSlider::add-page
+    {{
         background-color: #EEEEEE;
-        border: 1px solid #BBBBBB;
-        border-radius: 2px;
+        border: 1px solid #DDDDDD;
+        border-radius: 4px;
     }}
-
-    QSlider::sub-page:horizontal {{
+    #disabled-slider
+    {{
+        background-color: none;
+    }}
+    #disabled-slider::groove
+    {{
+        background: rgba(0, 0, 0, 0.0);
+        height: 6px;
+        border: 1px solid black;
+        border-radius: 4px;
+        left: 8px;
+        right: 8px;
+    }}
+    #disabled-slider::handle
+    {{
+        height: 12px;
+        margin: -5px 0;
+        width: 13px;
+        border-radius: 7px;
+        background-color: #EEEEEE;/*20, 170, 170, 1.0*/
+        border: 1px solid #DDDDDD;
+    }}
+    #disabled-slider::add-page
+    {{
+        background-color: #EEEEEE;
+        border: 1px solid #DDDDDD;
+        border-radius: 4px;
+    }}
+    #disabled-slider::sub-page
+    {{
+        background-color: #EEEEEE;
+        border: 1px solid #DDDDDD;
+        border-radius: 4px;
+    }}
+    QSlider::sub-page
+    {{
         background-color: rgba(20, 170, 170, 1.0);
-        border: 1px solid rgba(20, 140, 140, 1.0);
-        border-radius: 2px;
+        border: 1px solid rgba(0, 100, 100, 1.0);
+        border-radius: 4px;
     }}
-
-    QLabel {{
+    QLabel
+    {{
          color: #000000;
     }}
-
-    QListWidget {{
-        background-color: rgba(255, 255, 255, 0.5);
+    QTreeWidget
+    {{
+        padding: 5px;
+        show-decoration-selected: 0;
+        background-color: rgba(255, 255, 255, 0.4);
         border-radius: 3px;
         border: 1px solid rgb(255, 255, 255);
     }}
-
-    QListWidget::item
+    QHeaderView::section
     {{
+        background-color: rgba(255, 255, 255, 0.2);
+        padding: 2px;
+        height: 20px;
+        margin-bottom: 5px;
+        border: 1px solid black;
+        border-top:0px;
+        border-left:1px;
+        border-bottom:0x;
+    }}
+    QTreeWidget::item
+    {{
+        height: 25px;
         background-color: rgba(255, 255, 255, 0.0);
         padding: 5px;
         padding-left: 10px;
         border: none;
         border-bottom: 1px solid rgb(255, 255, 255);
     }}
-
-    QListWidget::item:hover
+    QTreeWidget::item:hover
     {{
-        background-color: rgba(255, 255, 255, 0.3);
+        background-color: rgba(255, 255, 255, 0.1);
         padding: 5px;
         padding-left: 10px;
         border: none;
         border-bottom: 1px solid rgb(255, 255, 255);
     }}
-
-    QListWidget::item:selected
+    QTreeWidget::item:selected
     {{
-        background-color: rgba(20, 170, 170, 0.5);
+        background-color: rgba(255, 255, 255, 0.3);
         padding: 5px;
         padding-left: 10px;
+        color: black;
         outline: 50px;
         border-bottom: 1px solid rgb(255, 255, 255);
     }}
-
-    QGroupBox {{
+    QGroupBox
+    {{
         background-color: rgba(255, 255, 255, 0.5);
         border-top: 1px solid rgb(255, 255, 255);
     }}
-
-    #squarePurpleButton {{
+    #squarePurpleButton
+    {{
         border-radius: 3px;
         border: 1px solid rgb(255, 255, 255);
         background-color: rgba(255, 255, 255, 0.5);
         color: black;
     }}
-    
-    #squarePurpleButton:hover {{
+    #squarePurpleButton:hover
+    {{
         background-color: rgba(20, 170, 170, 0.5);
         color: black;
     }}
-
-    #squareRedButton {{
+    #squareRedButton
+    {{
         border-radius: 3px;
         border: 1px solid rgb(255, 255, 255);
         background-color: rgba(255, 255, 255, 0.5);
         color: black;
     }}
-
-    #squareRedButton:hover {{
+    #squareRedButton:hover
+    {{
         background-color: rgba(255, 0, 0, 0.5);
         color: black;
     }}
-
     QComboBox
     {{   
         border-image: none;
@@ -324,106 +406,131 @@ lightModeStyleSheet = """
         border-bottom-right-radius: 3px;
         border-top-right-radius: 3px;
     }}
-
-    #settingsBackground {{
+    #settingsBackground
+    {{
         background-color: rgba(255, 255, 255, 0.5);
         border-top-left-radius: 3px;
         border-bottom-left-radius: 3px;
         border: 1px solid rgb(255, 255, 255);
         border-right: none;
     }}
-
-    QProgressBar {{
+    #settingsCheckbox
+    {{
+        background-color: rgba(255, 255, 255, 0.5);
+        border-radius: 3px;
+        border: 1px solid rgb(255, 255, 255);
+        padding-left: 7px;
+    }}
+    QProgressBar
+    {{
         border: none;
         border-radius: 0px;
         border-top: 1px solid rgb(255, 255, 255);
         background-color: rgba(255, 255, 255, 0.5)
     }}
-
     QProgressBar::chunk
     {{
         background-color: rgba(20, 180, 180, 0.5);
     }}
+    QHeaderView::section
+    {{
+        show-decoration-selected: 0;
+        background-color: transparent;
+    }}
+    QHeaderView
+    {{
+        show-decoration-selected: 0;
+        background-color: transparent;
+    }}
+    QProgressDialog
+    {{
+        background-color: #EEEEEE;
+    }}
+    #ProgressDialogProgressbar
+    {{
+        border: 0px;
+        background-color: #FFFFFF;
+        border-radius: 3px;
+    }}
+    #ProgressDialogProgressbar::chunk
+    {{
+        border-radius: 3px;
+        background-color: rgba(20, 170, 170);
+    }}
+    QToolTip
+    {{
+        background-color: #FFFFFF;
+        border: none;
+        padding: 3px;
+    }}
 """
 
 darkModeStyleSheet = """
-    * {{
+    * 
+    {{
         color: #EEEEEE;
-        font-size:14px;
+        font-size:12px;
         font-family:{0};
-        background-color: #333333;
     }}
-
-    #centralwidget {{
+    QMessageBox
+    {{
+        background-color:#333333;
+    }}
+    #centralwidget 
+    {{
         border-image: url(\"{1}\") 0 0 0 0 stretch stretch;
     }}
-
-    QPushButton {{
+    QPushButton 
+    {{
         border-image: none;
         background-color:  rgba(15, 140, 140, 1.0);
         width: 100px;
         height: 30px;
-         color: #EEEEEE;
+        color: #EEEEEE;
         border-radius: 3px;
     }}
-    
     QScrollBar 
     {{
         background-color: rgba(0, 0, 0, 0.0);
     }}
-
-    QScrollBar:vertical
-    {{
-        background-color: rgba(10, 150, 150, 1);
-    }}
-
-    QScrollBar::handle:vertical 
+    QScrollBar::handle:vertical
     {{
         margin-top: 17px;
         margin-bottom: 17px;
         border: none;
         min-height: 30px;
-        background-color: rgba(51, 51, 51, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.5);
     }}
-
-    QScrollBar::add-line:vertical 
-    {{
-        border: none;
-        background-color: rgba(51, 51, 51, 1);
-    }}
-
-    QScrollBar::sub-line:vertical 
-    {{
-        border: none;
-        background-color: rgba(51, 51, 51, 1);
-    }}
-
-    QScrollBar:horizontal
-    {{
-        background: rgb(10, 150, 150);
-    }}
-
-    QScrollBar::handle:horizontal 
+    QScrollBar::handle:horizontal
     {{
         margin-left: 17px;
         margin-right: 17px;
         border: none;
         min-width: 30px;
-        background-color: rgba(51, 51, 51, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.5);
     }}
-
-    QScrollBar::add-line:horizontal 
+    QScrollBar::add-line 
     {{
         border: none;
-        background-color: rgba(51, 51, 51, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.5);
     }}
-
-    QScrollBar::sub-line:horizontal 
+    QScrollBar::sub-line 
     {{
         border: none;
-        background-color: rgba(51, 51, 51, 1);
+        border-radius: 3px;
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.5);
     }}
-
+    QScrollBar::corner
+    {{
+        background-color: none;
+    }}
     QLabel
     {{   
         border-image: none;
@@ -431,7 +538,6 @@ darkModeStyleSheet = """
         background-color: none;
         
     }}
-
     QComboBox
     {{   
         border-image: none;
@@ -445,23 +551,49 @@ darkModeStyleSheet = """
         border-top:0px;
         padding-left: 7px;
     }}
-    QAbstractItemView {{
+    QSpinBox
+    {{
+        border: 1px solid black;
+        selection-background-color: rgba(0, 0, 0, 0.7);
+        background-color: rgba(0, 0, 0, 0.5);
+        border-radius: 3px;
+        border-top-left-radius: 0px;
+        border-bottom-left-radius: 0px;
+        padding-left: 7px;
+    }}
+    QSpinBox::up-button 
+    {{
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+    }}
+    QSpinBox::down-button 
+    {{
+        subcontrol-origin: padding;
+        subcontrol-position: bottom right;
+    }}
+    QSpinBox::up-arrow 
+    {{
+        width: 16px;
+        height: 16px;
+    }}
+    QAbstractItemView 
+    {{
         background-color: rgb(41, 41, 41);
         margin: 0px;
         border-radius: 3px;
     }}
-
-    QMenuBar {{
+    QMenuBar
+    {{
         background-color: #333333;
         color: #EEEEEE;;
     }}
-
-    QMenu {{
+    QMenu 
+    {{
         background-color: #333333;
         border-radius: 10px;
     }}
-
-    QMenu::item {{
+    QMenu::item 
+    {{
         border: 3px solid #333333;
         padding-right: 10px;
         padding-left: 5px;
@@ -469,146 +601,273 @@ darkModeStyleSheet = """
         color: #EEEEEE;;
         padding-left: 8px;
     }}
-
-    QMenu::item:selected {{
+    QMenu::item:selected 
+    {{
         border: 3px solid rgba(15, 140, 140, 1.0);
         background-color: rgba(15, 140, 140, 1.0);
     }}
-    QMenuBar::item {{
+    QMenuBar::item 
+    {{
         background-color: #333333;
         border: 3px solid  #333333;
         padding-right: 5px;
         padding-left: 5px;
     }}
-
-    QMenuBar::item:selected {{
+    QMenuBar::item:selected 
+    {{
         background-color: rgba(15, 140, 140, 1.0);
         border: 3px solid  rgba(15, 140, 140, 1.0);
     }}
-
-    QSlider {{
+    QSlider 
+    {{
         background-color: none;
     }}
-
-    QSlider::handle:horizontal {{
+    QSlider::groove
+    {{
+        background: rgba(0, 0, 0, 0.0);
+        height: 6px;
+        border: 1px solid black;
+        border-radius: 4px;
+        left: 8px;
+        right: 8px;
+    }}
+    QSlider::handle
+    {{
+        height: 12px;
+        margin: -5px 0;
+        width: 13px;
         border-radius: 7px;
         background-color: rgba(20, 170, 170, 1.0);/*20, 170, 170, 1.0*/
-        border: 0px solid rgba(00, 100, 100, 1.0);
+        border: 1px solid rgba(00, 100, 100, 1.0);
     }}
-
-    QSlider::add-page:horizontal {{
+    QSlider::add-page 
+    {{
         background-color: #333333;
         border: 1px solid #222222;
-        border-radius: 2px;
+        border-radius: 4px;
     }}
-
-    QSlider::sub-page:horizontal {{
+    QSlider::sub-page 
+    {{
         background-color: rgba(20, 170, 170, 1.0);
         border: 1px solid rgba(0, 100, 100, 1.0);
-        border-radius: 2px;
+        border-radius: 4px;
     }}
-
-    QLabel {{
+    #disabled-slider 
+    {{
+        background-color: none;
+    }}
+    #disabled-slider::groove
+    {{
+        background: rgba(0, 0, 0, 0.0);
+        height: 6px;
+        border: 1px solid black;
+        border-radius: 4px;
+        left: 8px;
+        right: 8px;
+    }}
+    #disabled-slider::handle
+    {{
+        height: 12px;
+        margin: -5px 0;
+        width: 13px;
+        border-radius: 7px;
+        background-color: #333333;/*20, 170, 170, 1.0*/
+        border: 1px solid #222222;
+    }}
+    #disabled-slider::add-page
+    {{
+        background-color: #333333;
+        border: 1px solid #222222;
+        border-radius: 4px;
+    }}
+    #disabled-slider::sub-page 
+    {{
+        background-color: #333333;
+        border: 1px solid #222222;
+        border-radius: 4px;
+    }}
+    QLabel 
+    {{
          color: #EEEEEE;
     }}
-
-    QListWidget {{
-        background-color: rgba(51, 51, 51, 0.5);
+    QTreeWidget
+    {{
+        padding: 5px;
+        show-decoration-selected: 0;
+        background-color: rgba(0, 0, 0, 0.4);
         border-radius: 3px;
-        border: 1px solid rgb(51, 51, 51);
+        border: 1px solid rgb(0, 0, 0);
     }}
-
-    QListWidget::item
+    QHeaderView::section
     {{
-        background-color: rgba(51, 51, 51, 0.0);
+        background-color: rgba(0, 0, 0, 0.2);
+        padding: 2px;
+        height: 20px;
+        margin-bottom: 5px;
+        border: 1px solid black;
+        border-top:0px;
+        border-left:1px;
+        border-bottom:0x;
+    }}
+    QTreeWidget::item
+    {{
+        height: 25px;
+        background-color: rgba(0, 0, 0, 0.0);
         padding: 5px;
         padding-left: 10px;
         border: none;
-        border-bottom: 1px solid rgb(51, 51, 51);
+        border-bottom: 1px solid rgb(0, 0, 0);
     }}
-
-    QListWidget::item:hover
+    QTreeWidget::item:hover
     {{
-        background-color: rgba(51, 51, 51, 0.3);
+        background-color: rgba(0, 0, 0, 0.1);
         padding: 5px;
         padding-left: 10px;
         border: none;
-        border-bottom: 1px solid rgb(51, 51, 51);
+        border-bottom: 1px solid rgb(0, 0, 0);
     }}
-
-    QListWidget::item:selected
+    QTreeWidget::item:selected
     {{
-        background-color: rgba(20, 170, 170, 0.5);
+        background-color: rgba(0, 0, 0, 0.3);
         padding: 5px;
         padding-left: 10px;
+        color: white;
         outline: 50px;
-        border-bottom: 1px solid rgb(51, 51, 51);
+        border-bottom: 1px solid rgb(0, 0, 0);
     }}
-
-    QGroupBox {{
-        background-color: rgba(51, 51, 51, 0.5);
-        border-top: 1px solid rgb(51, 51, 51);
+    QGroupBox 
+    {{
+        background-color: rgba(0, 0, 0, 0.4);
+        border-top: 1px solid rgb(0, 0, 0);
     }}
-
-    #squarePurpleButton {{
+    #squarePurpleButton 
+    {{
         border-radius: 3px;
-        border: 1px solid rgb(51, 51, 51);
-        background-color: rgba(51, 51, 51, 0.5);
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.4);
         color: white;
     }}
-    
-    #squarePurpleButton:hover {{
+    QLineEdit
+    {{
+        selection-background-color: rgba(0, 0, 0, 0.4);
+        border-radius: 3px;
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.4);
+        color: white;
+    }}
+    #squarePurpleButton:hover
+    {{
         background-color: rgba(20, 170, 150, 0.5);
         color: white;
     }}
-
-    #squareRedButton {{
+    #squareRedButton 
+    {{
         border-radius: 3px;
-        border: 1px solid rgb(51, 51, 51);
-        background-color: rgba(51, 51, 51, 0.5);
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.4);
         color: white;
     }}
-
-    #squareRedButton:hover {{
+    #squareRedButton:hover
+    {{
         background-color: rgba(255, 0, 0, 0.5);
         color: white;
     }}
-
     QComboBox
     {{   
         border-image: none;
         selection-background-color: rgba(20, 170, 150, 1.0);
         margin:0px;
-        border: 1px solid rgb(51, 51, 51);
-        background-color: rgba(51, 51, 51, 0.5);
+        border: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.5);
         border-radius: 0px;
         padding-left: 7px;
         border-bottom-right-radius: 3px;
         border-top-right-radius: 3px;
     }}
-
-    #settingsBackground {{
-        background-color: rgba(51, 51, 51, 0.5);
+    #settingsBackground
+    {{
+        background-color: rgba(0, 0, 0, 0.5);
         border-top-left-radius: 3px;
         border-bottom-left-radius: 3px;
-        border: 1px solid rgb(51, 51, 51);
+        border: 1px solid rgb(0, 0, 0);
         border-right: none;
     }}
-
-    QProgressBar {{
+    #settingsCheckbox
+    {{
+        background-color: rgba(0, 0, 0, 0.5);
+        border-radius: 3px;
+        border: 1px solid rgb(0, 0, 0);
+        padding-left: 7px;
+    }}
+    QProgressBar
+    {{
         border: none;
         border-radius: 0px;
-        border-top: 1px solid rgb(51, 51, 51);
-        background-color: rgba(51, 51, 51, 0.5)
+        border-top: 1px solid rgb(0, 0, 0);
+        background-color: rgba(0, 0, 0, 0.4)
     }}
-
     QProgressBar::chunk
     {{
         background-color: rgba(10, 150, 150, 0.5);
     }}
+    QHeaderView::section
+    {{
+        show-decoration-selected: 0;
+        background-color: transparent;
+    }}
+    QHeaderView
+    {{
+        show-decoration-selected: 0;
+        background-color: transparent;
+    }}
+    QProgressDialog
+    {{
+        background-color: #333333;
+    }}
+    #ProgressDialogProgressbar
+    {{
+        border: 0px;
+        background-color: #222222;
+        border-radius: 3px;
+    }}
+    #ProgressDialogProgressbar::chunk
+    {{
+        border-radius: 3px;
+        background-color: rgb(20, 120, 120);
+    }}
+    QToolTip
+    {{
+        background-color: #333333;
+        border: none;
+        padding: 3px;
+    }}
 """
 
-def getWindowStyleScheme():
+def getTheme():
+    if(platform.system()=="Windows"):
+        import winreg
+        if(int(platform.release())>=10):
+            access_registry = winreg.ConnectRegistry(None, winreg.HKEY_CURRENT_USER)
+            access_key = winreg.OpenKey(access_registry, r"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+            readKeys = {}
+            for n in range(20):
+                try:
+                    x = winreg.EnumValue(access_key, n)
+                    readKeys[x[0]]=x[1]
+                except:
+                    pass
+            try:
+                return readKeys["AppsUseLightTheme"]
+            except:
+                return 1
+        else:
+            return 1
+    elif(platform.system()=="Darwin"):
+        return int(darkdetect.isLight())
+    else:
+        return 1
+
+def getWindowStyleSheet():
     global settings, realpath, background_picture_path
     mode = 'auto'
     try:
@@ -626,11 +885,11 @@ def getWindowStyleScheme():
             log("[  WARN  ] Mode is invalid")
     except KeyError:
         log("[  WARN  ] Mode key does not exist on settings")
-    if(mode=='auto' and _platform != 'darwin'):
+    if(mode=='auto' and _platform == 'linux'):
         log('[        ] Auto mode selected and os is not macOS. Swithing to light...')
         mode='light'
     if(mode=='auto'):
-        if(darkdetect.isDark()):
+        if(getTheme()==0):
             log('[        ] Auto mode selected. Swithing to dark...')
             mode='dark'
         else:
@@ -642,8 +901,17 @@ def getWindowStyleScheme():
     else:
         return darkModeStyleSheet.format(font, background_picture_path)
 
-   
-#Essential functions
+def checkModeThread():
+    lastMode = getTheme()
+    while True:
+        if(lastMode!=getTheme()):
+            get_updater().call_in_main(music.setStyleSheet, getWindowStyleSheet())
+            lastMode = getTheme()
+        time.sleep(0.1)
+
+
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ----------------------------------------------------------------------------- Essential Functions ----------------------------------------------------------------------------- #
 def run(s):
     if(is_win7):
         log('[   OK   ] Running subprocess as win7_8...')
@@ -656,35 +924,25 @@ def run(s):
         process.wait()
         return process.returncode
 
-def log(s, force=True):
-    global debugging
-    if(debugging or "WARN" in str(s) or "FAILED" in str(s) or not(force)):
+def log(s, force=False):
+    global debugging, logHistory
+    if(debugging or "WARN" in str(s) or "FAILED" in str(s) or force):
         print((time.strftime('[%H:%M:%S] ', time.gmtime(time.time())))+str(s))
+    try:
+        logHistory += str(s)
+        logHistory += "\n"
+    except Exception as e:
+        if(debugging):
+            raise e
 
-def notify(title, body, icon='icon-sptmusic.png'):
-    global realpath
-    notify=False
-    if _platform == 'win32':
-        if int(platform.release()) >= 10:
-            notify=True
-    elif _platform == 'darwin':
-        notify=False
-    elif _platform == 'linux' or _platform=='linux2':
-        notify=True
-    if(notify):
-        try:
-            notification = Notify()
-            notification.title = str(title)
-            notification.message = str(body)
-            try:
-                notification.icon = realpath+'/'+icon
-            except:
-                pass
-            notification.send(block=True)
-        except Exception as e:
-            log("[  FAILED ] Unable to show notification: "+str(e))
+def notify(title, body, icon=QtGui.QIcon(realpath+"/icon.ico")):
+    log(f"[   OK   ] Showing notification with title {title} and body {body}")
+    tray.showMessage(title, body, icon)
+    
 
-if(True):#Updates and dependencies
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ------------------------------------------------------------------------------ Update Functions ------------------------------------------------------------------------------- #
+if(True):
     def checkUpdates_py():
         global music, actualVersion
         try:
@@ -765,9 +1023,9 @@ if(True):#Updates and dependencies
         try:
             installationProgressBar('Launching')
             throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Updater.exe. Then follow the on-screen instructions.")
-            os.system('start /B {0}'.format(filename))
+            os.system('start /B {0} /silent'.format(filename))
             try:        
-                killFfplay()
+                killPlayProcess()
             except AttributeError:
                 pass
             get_updater().call_in_main(sys.exit)
@@ -799,8 +1057,6 @@ if(True):#Updates and dependencies
 
     def install_linux_part2(passwd, again=False):
         installationProgressBar('Installing')
-        #get_updater().call_in_main(texts["create"].setPlainText, "The program is being installed. Please wait until the installation process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
-        #get_updater().call_in_main(texts["extract"].setPlainText, "The program is being installed. Please wait until the installation process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
         p1 = os.system('cd; echo "{0}" | sudo -S apt install ./"somepythonthings-music_update.deb" -y'.format(passwd))
         if(p1 == 0):  # If the installation is done
             p2 = os.system('cd; rm "./somepythonthings-music_update.deb"')
@@ -809,7 +1065,7 @@ if(True):#Updates and dependencies
             installationProgressBar('Installing')
             get_updater().call_in_main(throw_info,"SomePythonThings Music Updater","The update has been applied succesfully. Please reopen the application")
             try:        
-                killFfplay()
+                killPlayProcess()
             except AttributeError:
                 pass
             get_updater().call_in_main(sys.exit)
@@ -824,12 +1080,9 @@ if(True):#Updates and dependencies
     def download_macOS(links):
         try:
             installationProgressBar('Downloading')
-            #get_updater().call_in_main(texts["create"].setPlainText, "The installer is being downloaded. Please wait until the download process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
-            #get_updater().call_in_main(texts["extract"].setPlainText, "The installer is being downloaded. Please wait until the download process finishes. This shouldn't take more than a couple of minutes.\n\nPlease DO NOT close the application")
             p1 = os.system('cd; rm somepythonthings-music_update.dmg')
             if(p1!=0):
                 log("[  WARN  ] unable to delete somepythonthings-music_update.dmg")
-                #raise SystemError("Unable to delete somepythonthings-music_update.dmg, process exit code "+str(p1))
             wget.download(links['macos'], out='{0}/somepythonthings-music_update.dmg'.format(os.path.expanduser('~')))
             get_updater().call_in_main(install_macOS)
             log("[   OK   ] Download is done, starting launch process.")
@@ -842,148 +1095,251 @@ if(True):#Updates and dependencies
     def install_macOS():
         installationProgressBar('Launching')
         time.sleep(0.2)
-        #get_updater().call_in_main(texts["create"].setPlainText, "Please follow on-screen instructions to continue")
-        #get_updater().call_in_main(texts["extract"].setPlainText, "Please follow on-screen instructions to continue")
         throw_info("SomePythonThings Music Updater", "The update file has been downloaded successfully. When you click OK, SomePythonThings Music is going to be closed and a DMG file will automatically be opened. Then, you'll need to drag the application on the DMG to the applications folder (also on the DMG). Click OK to continue")
         p2 = os.system('cd; open ./"somepythonthings-music_update.dmg"')
         log("[  INFO  ] macOS installation unix output code is \"{0}\"".format(p2))
         try:        
-            killFfplay()
+            killPlayProcess()
         except AttributeError:
             pass
         sys.exit()
 
-    def install_ffmpeg_linux_part1(again=False):
-        global music
-        if(QtWidgets.QMessageBox.Ok == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music Assistant', "SomePythoThings Music needs to install the following packages in order to run: \"ffmpeg\", \"libavcodec-extra\"\nIf you click OK, SomePythonThings Music will download and install the required packages.", QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel, QtWidgets.QMessageBox.Ok)):
-            installationProgressBar('Installing')
-            time.sleep(0.2)
-            if not again:
-                passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "Please write your password to perform the ffmpeg installation. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-            else:
-                passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-            t = Thread(target=install_ffmpeg_linux_part2, args=(passwd, again))
-            t.start()
 
-    def install_ffmpeg_linux_part2(passwd, again=False):
-        installationProgressBar('Installing')
-        p1 = os.system('cd; echo "{0}" | sudo -S apt install ffmpeg libavcodec-extra -y'.format(passwd))
-        if(p1 == 0):  # If the installation is done
-            installationProgressBar('Installing')
-            get_updater().call_in_main(throw_info,"SomePythonThings Music Assistant","Ffmpeg was installed successfully. Please restart the application")
-            try:        
-                killFfplay()
-            except AttributeError:
-                pass
-            get_updater().call_in_main(sys.exit)
-            sys.exit()
-        else:  # If the installation is falied on the 1st time
-            if not again:
-                get_updater().call_in_main(install_ffmpeg_linux_part1, True)
-            else:
-                installationProgressBar('Stop')
-                get_updater().call_in_main(throw_error, "SomePythonThings Music Assistant", "Unable to apply the update. Please try again later.")
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ---------------------------------------------------------------------------------- Functions ---------------------------------------------------------------------------------- #
+def youtubeWindow():
 
-    def download_ffpmeg_win():
+    dialog = None
+    downloadSize = 0
+
+    def openYoutubeLink(link):
+        webbrowser.open(link)
+
+    def resizeWidgets():
+        h = youtube.height()
+        w = youtube.width()
+        query.move(10, 10)
+        query.resize(w-120, 30)
+        button.move(w-100, 10)
+        button.resize(90, 30)
+        results.move(10, 50)
+        results.resize(w-20, h-100)
+        closeButton.move(10, h-40)
+
+    def getResults():
         try:
-            response = urlopen("http://www.somepythonthings.tk/resources/ffmpeg-win.res")
-            url = response.read().decode("utf8")
-            global texts
-            run('cd %windir%\\..\\ & mkdir SomePythonThings')
-            time.sleep(0.01)
-            get_updater().call_in_main(throw_info, 'SomePythonThings Music', 'SomePythonThings Music needs ffmpeg to be installed on your computer in order to run. \nFfmpeg is going to be downloaded and prepared for the installation. Please wait until the download is finished.\nPress OK to continue')
-            os.chdir("{0}/../SomePythonThings".format(os.environ['windir']))
-            installationProgressBar('Downloading')
-            filedata = urlopen(url)
-            datatowrite = filedata.read()
-            filename = ""
-            with open("{0}/../SomePythonThings/SomePythonThings-Music-Ffmpeg-Installer.exe".format(os.environ['windir']), 'wb') as f:
-                f.write(datatowrite)
-                filename = f.name
-            installationProgressBar('Launching')
-            log("[   OK   ] file downloaded to C:\\SomePythonThings\\{0}".format(filename))
-            get_updater().call_in_main(launch_ffmpeg_win, filename)
+            videosSearch = VideosSearch(query.text(), limit = 50)
+            resultsFound = (videosSearch.result()['result'])
+            results.clear()
+            i = 20
+            for video in resultsFound:
+                newItem = QtWidgets.QTreeWidgetItem()
+                newItem.setText(0, "{0:0>4}".format(str(i)))
+                newItem.setText(1, video['title'])
+                newItem.setToolTip(1, "Double-click to download")
+                newItem.setIcon(1, QtGui.QIcon(realpath.replace("\\", "/")+"/icons-sptmusic/download.ico"))
+                newItem.setText(3, video['duration'])
+                newItem.setText(4, video['channel']['name'])
+                newItem.setText(6, "https://www.youtube.com/watch?v="+video['id'])
+                results.addTopLevelItem(newItem)
+                
+                btn = QtWidgets.QPushButton("Download", youtube)
+                btn.resize(100, 20)
+                btn.setObjectName("squarePurpleButton")
+                btn.setToolTip("Download to your library")
+                btn.clicked.connect(startDownload)
+                
+                results.setItemWidget(newItem, 2, btn)
+
+                url = "https://www.youtube.com/watch?v="+video['id']
+                link = QtWidgets.QPushButton(url, youtube)
+                link.clicked.connect(partial(openYoutubeLink, url))
+                link.setToolTip("Open link on browser")
+                link.setObjectName("squarePurpleButton")
+                
+                results.setItemWidget(newItem, 5, link)
+
+                i -= 1
+
+            if(len(resultsFound) == 0):
+                get_updater().call_in_main(throw_error, "SomePythonThings Music", "No results found!")
         except Exception as e:
-            if debugging:
+            get_updater().call_in_main(throw_error, "SomePythonThings Music", "Unable to retrieve youtube results!\n\nPlease try it again later")
+            if(debugging):
                 raise e
-            get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred while downloading the SomePythonTings Music installer. Please check your internet connection and try again later\n\nError Details:\n{0}".format(str(e)))
 
-    def launch_ffmpeg_win(filename):
-        try:
-            installationProgressBar('Launching')
-            throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Ffmpeg-Installer.exe. Then follow the on-screen instructions.")
-            run('start /B {0}'.format(filename))
-            try:        
-                killFfplay()
-            except AttributeError:
-                pass
-            get_updater().call_in_main(sys.exit)
-            sys.exit()
-        except Exception as e:
-            if debugging:
-                raise e
-            throw_error("SomePythonThings Music Updater", "An error occurred while launching the Ffmpeg installer.\n\nError Details:\n{0}".format(str(e)))
+    def startDownload():
+        t = KillableThread(target=downloadAndAdd, daemon=True)
+        name = results.currentItem().text(1)
 
-    def download_ffmpeg_macOS():
-        get_updater().call_in_main(throw_info, 'SomePythonThings Music Assistant', "SomePythonThings Music needs ffmpeg in order to play music. Ffmpeg installer is going to be downloaded and installed. Click OK to continue.")
-        url = "https://www.somepythonthings.tk/resources/ffmpeg-mac.res"
-        os.chdir(os.path.expanduser('~'))
-        installationProgressBar()
-        filename = wget.download(url, out="resources.res")
-        file = open(filename, 'r')
-        url = file.read()
-        file.close()
-        os.system('cd; rm resources.res')
-        os.system('cd; rm {0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~')))
-        wget.download(url, out='{0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~')))
-        get_updater().call_in_main(ask_ffmpeg_macOS)
-
-    def ask_ffmpeg_macOS():
-        if(QtWidgets.QMessageBox.Ok == QtWidgets.QMessageBox.question(music, 'SomePythonThings Music Assistant', "SomePythoThings Music needs to install ffmpeg in order to run\nIf you click OK, SomePythonThings Music will download and install the required packages.", QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel, QtWidgets.QMessageBox.Ok)):
-            install_ffmpeg_macOS_part1()
-        else:
-            throw_warning('SomePythonThings Music', "If you don't install ffmpeg, SomePythonThings Music will not work!")
-            installationProgressBar('Stop')
-
-    def install_ffmpeg_macOS_part1(again=False):
-        global music
-        installationProgressBar('Installing')
-        time.sleep(0.2)
-        if not again:
-            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "Please write your password to perform the ffmpeg installation. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-        else:
-            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music Assistant", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
-        t = Thread(target=install_ffmpeg_macOS_part2, args=(passwd, again))
+        def killDownload():
+            t.kill()
+        
+        nonlocal dialog
+        dialog = QtWidgets.QProgressDialog(youtube)
+        dialog.setAutoFillBackground(True)
+        dialog.setWindowModality(QtCore.Qt.WindowModal)
+        dialog.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        dialog.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        dialog.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+        dialog.setModal(True)
+        dialog.setSizeGripEnabled(False)
+        dialog.setWindowTitle('SomePythonThings Music')
+        dialog.setLabelText(f'Preparing {name} download...')
+        pgsbar = QtWidgets.QProgressBar(dialog)
+        pgsbar.setTextVisible(False)
+        pgsbar.setObjectName("ProgressDialogProgressbar")
+        dialog.setBar(pgsbar)
+        dialog.setRange(0, 0)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(True)
+        dialog.show()
+        dialog.canceled.connect(killDownload)
         t.start()
+        dialog.exec_()
 
-    def install_ffmpeg_macOS_part2(passwd, again=False):
-        installationProgressBar('Installing')
+    def showDownloadProgress(stream, chunk, bytes_remaining):
+        global downloadSize
+        get_updater().call_in_main(dialog.setValue, (downloadSize-bytes_remaining)/downloadSize*100)
+
+    def downloadAndAdd():
+        global downloadSize
         try:
-            subprocess.run('cd; echo "{0}" | sudo -S installer -pkg "{1}" -target / -allowUntrusted && echo "Done!"'.format(passwd, '{0}/ffmpeg-plugin-for-somepythonthings-music.pkg'.format(os.path.expanduser('~'))), shell=True, check=True)
-            installationProgressBar(action='Stop')
-            installationProgressBar('Installing')
-            get_updater().call_in_main(throw_info,"SomePythonThings Music Assistant","Ffmpeg was installed successfully. Please restart the application")
-            try:        
-                killFfplay()
-            except AttributeError:
-                pass
-            get_updater().call_in_main(sys.exit)
-            sys.exit()
-        except:  # If the installation is falied on the 1st time
-            if not again:
-                get_updater().call_in_main(install_ffmpeg_macOS_part1, True)
-            else:
-                installationProgressBar('Stop')
-                get_updater().call_in_main(throw_error, "SomePythonThings Music Assistant", "Unable to apply the update. Please try again later.")
+            warn = False
+            link = results.currentItem().text(6)
+            name = results.currentItem().text(1)
+            os.chdir(os.path.expanduser("~"))
+            get_updater().call_in_main(dialog.setLabelText, f"Preparing things...")
+            try:
+                os.chdir("SomePythonThings Music")
+                log("[   OK   ] Acessed \"~/SomePythonThings Music\"")
+            except FileNotFoundError:
+                os.mkdir("SomePythonThings Music")
+                log("[  WARN  ] \"~/SomePythonThings Music\" not found, creating it...")
+                os.chdir("SomePythonThings Music")
 
-#Program functions
+            output_path = os.getcwd().replace("\\", "/")
+            log("[   OK   ] Output path is "+output_path)
+
+            get_updater().call_in_main(dialog.setLabelText, f"Fetching \"{name}\" links...")
+            yt = YouTube(link)
+            yt.register_on_progress_callback(showDownloadProgress)
+            file = yt.streams.get_highest_resolution()
+            downloadSize = file.filesize
+            get_updater().call_in_main(dialog.setRange, 0, 101)
+            get_updater().call_in_main(dialog.setLabelText, f"Downloading \"{name}\"...")
+            file.download(output_path, name)
+            filename = file.get_file_path(name, output_path)
+            log(f"[   OK   ] File {filename} downloaded successfully")
+            get_updater().call_in_main(dialog.setRange, 0, 0)
+
+            get_updater().call_in_main(dialog.setLabelText, f"Converting \"{name}\" to mp3...")
+            VideoFileClip(filename).audio.write_audiofile(filename.replace('mp4', 'mp3'))
+            log(f"[   OK   ] File {filename} converted to mp3 successfully")
+
+            try:
+                os.remove(filename)
+            except:
+                log("[ FAILED ] Unable to remove MP4 file, going for 2nd attempt...")
+                if(_platform=="win32"):
+                    subprocess.call(args="taskkill /im ffmpeg-win64-v4.2.2.exe /f", shell=True, stdin=subprocess.PIPE, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+                warn = True
+            log(f"[   OK   ] File {filename} removed (because we have already the mp3)")
+            oldName = filename
+            filename = filename.replace('mp4', 'mp3')
+
+            get_updater().call_in_main(dialog.close)
+            get_updater().call_in_main(dialog.setAutoFillBackground,False)
+            get_updater().call_in_main(dialog.setWindowFlag,QtCore.Qt.WindowContextHelpButtonHint, True)
+            get_updater().call_in_main(dialog.setWindowFlag,QtCore.Qt.WindowCloseButtonHint, True)
+            get_updater().call_in_main(dialog.setModal,False)
+            get_updater().call_in_main(dialog.setSizeGripEnabled,True)
+            get_updater().call_in_main(addFile, filename)
+            if(not(warn)):
+                if(_platform=="win32"):
+                    get_updater().call_in_main(throw_info, "SomePythonThings Music", f"The song {name} has been saved successfully to your library")
+            else:
+                get_updater().call_in_main(throw_warning, "SomePythonThings Music", f"The song {name} has been saved successfully to your library, but we weren't able to delete some temporary files. We'll try to remove them later")
+                try:
+                    os.remove(oldName)
+                    log("[   OK   ] MP4 File removed at 2nd attempt")
+                except:
+                    log("[ FAILED ] Unable to remove MP4 file!!!")
+
+        except Exception as e:
+            get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred while downloading the file.")
+            try: 
+                get_updater().call_in_main(dialog.close)
+            except:
+                pass
+            if(debugging):
+                raise e
+
+    global music
+    youtube = ClosableWindow(music)
+    youtube.setStyleSheet(getWindowStyleSheet())
+    youtube.resize(900, 500)
+    youtube.setMinimumSize(300, 200)
+    youtube.setWindowTitle("Download Youtube Music")
+    youtube.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, True)
+    youtube.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, False)
+    youtube.setWindowModality(QtCore.Qt.ApplicationModal)
+    youtube.resized.connect(resizeWidgets)
+    youtube.setAutoFillBackground(True)
+    youtube.setWindowModality(QtCore.Qt.WindowModal)
+    youtube.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    youtube.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+    youtube.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+
+    query = QtWidgets.QLineEdit(youtube)
+    query.setPlaceholderText("Imagine Dragons - Believer")
+    query.move(10, 10)
+    query.returnPressed.connect(getResults)
+    query.resize(580, 30)
+
+    button = QtWidgets.QPushButton(youtube)
+    button.setText("Search")
+    button.setObjectName("squarePurpleButton")
+    button.move(600, 10)
+    button.resize(90, 30)
+    button.clicked.connect(getResults)
+
+    results = QtWidgets.QTreeWidget(youtube)
+    results.setColumnCount(7)
+    results.setHeaderLabels(["#", " Name", " Download", " Duration", " Publisher", " Youtube link (Click to open)", ""])
+    results.setColumnWidth(0, 20)
+    results.setColumnWidth(1, 500)
+    results.setColumnWidth(2, 100)
+    results.setColumnWidth(3, 80)
+    results.setColumnWidth(4, 120)
+    results.setColumnWidth(5, 400)
+    results.setColumnWidth(6, 0)
+    results.setFocusPolicy(QtCore.Qt.NoFocus)
+    results.move(10, 50)
+    results.setSortingEnabled(True)
+    results.itemDoubleClicked.connect(startDownload)
+    results.resize(620, 370)
+
+    closeButton = QtWidgets.QPushButton(youtube)
+    closeButton.setText("Close")
+    closeButton.setObjectName("squareRedButton")
+    closeButton.move(10, 460)
+    closeButton.resize(200, 30)
+    closeButton.clicked.connect(youtube.close)
+
+    query.setFocus()
+    youtube.show()
+
 def toStyleMainList():
     global playing, lists, trackNumber, music, font, t
     try:
-        for item in range(0, lists['main'].count()):
-            lists['main'].item(item).setFont(QtGui.QFont(font, weight=QtGui.QFont.Normal))
+        for item in range(0, mainList.topLevelItemCount()):
+            mainList.topLevelItem(item).setFont(0, QtGui.QFont(font, weight=QtGui.QFont.Normal))
+            mainList.topLevelItem(item).setIcon(0, QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(mainList.topLevelItem(item).text(2))))
         if(playing):
-            lists['main'].item(trackNumber).setFont(QtGui.QFont(font, weight=QtGui.QFont.Bold))
+            mainList.topLevelItem(trackNumber).setFont(0, QtGui.QFont(font, weight=QtGui.QFont.Bold))
+            mainList.topLevelItem(trackNumber).setIcon(0, QtGui.QIcon(str(realpath)+"/icons-sptmusic/playing.ico"))
+        mainList.repaint()
     except AttributeError:
         log('[  WARN  ] An error occurred on playback thread, trackNumber is {0}...'.format(str(trackNumber)))
         try:
@@ -994,47 +1350,50 @@ def toStyleMainList():
         t.daemon = True
         t.start()
 
-def killFfplay():
-    if(_platform=='win32'):
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        subprocess.call(["taskkill", "/IM", "ffplay.exe", "/T", "/F"], shell=True, startupinfo=si, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    else:
-        playProcess.kill()
+def killPlayProcess():
+    global playProcess
+    playProcess.stop()
 
 def removeFromPlaylist():
-    global lists, files, trackNumber, justContinue, passedTime
-    trackToRemove = lists['main'].currentRow()
-    if(trackToRemove>=0):
-        log('[        ] Index of files list is {0}, deleting song in position {0}'.format(int(trackToRemove)))
-        files.remove(files[trackToRemove])
-        lists['main'].takeItem(trackToRemove)
-        passedTime = 0.0
-        if(trackNumber>len(files)):
-            toStrictlyPause()
-        if(trackNumber == trackToRemove):
-            justContinue = True
-        log('[   OK   ] Actual playlist:'+str(files))
-    else:
-        log('[  WARN  ] No song selected to detete!')
+    global lists, trackNumber, justContinue, passedTime
+    for itemToRemove in mainList.selectedItems():
+        if(itemToRemove != None):
+            try:
+                trackToRemove = mainList.indexOfTopLevelItem(itemToRemove)
+                log('[        ] Index of files list is {0}, deleting song in position {0}'.format(trackToRemove))
+                item = mainList.takeTopLevelItem(trackToRemove)
+                del item
+                passedTime = 0.0
+                log("[   OK   ] File removed!")
+            except Exception as e:
+                throw_error("Unable to remove track!", "Unable to remove the track from the playlist.\n\nError Details: \n"+str(e))
+                if(debugging):
+                    raise e
+        else:
+            log('[  WARN  ] No song selected to detete!')
 
-def playFile(file, time=0):
-    global playProcess, volume
+def playFile(file, passedTime=0):
+    global playProcess, volume, blockPlay
+    log(f"[        ] Startig playback thread, with file \"{file}\" and time {passedTime} s")
     try:
-        killFfplay()
+        killPlayProcess()
     except AttributeError:
         pass
+
     _volume = int(volume)
     if(muted):
         _volume=0
-    if(_platform=='win32'):
-        _volume = int(volume/10)
-    playProcess = None
-    loglevel = 'quiet'
-    if(debugging):
-        loglevel='verbose'
-    log('[        ] Play command is '+ str(['ffplay', '-ss', str(time), '-autoexit', '-volume', str(_volume), '-loglevel', loglevel, '-nodisp', '-i', '"'+file+'"']))
-    playProcess = subprocess.Popen(['ffplay', '-ss', str(time), '-autoexit', '-volume', str(_volume), '-loglevel', loglevel, '-nodisp', '-i', file], shell=(_platform=='win32'))
+
+    if(_platform=="win32"):
+        filePreset="file:///"
+    else: 
+        filePreset="file://"
+
+    playProcess.setMedia(QtCore.QUrl(filePreset+file))
+    playProcess.setPosition(int(passedTime*1000))
+    playProcess.setVolume(_volume)
+    playProcess.play()
+    blockPlay = False
 
 def toShuffle():
     global shuffle, buttons
@@ -1042,11 +1401,13 @@ def toShuffle():
         log("[   OK   ] Shuffle disabled")
         shuffle=False
         shuffleAction.setChecked(False)
+        shuffleActionTray.setChecked(False)
         buttons['shuffle'].setStyleSheet("background-color: rgba(255, 255, 255, 0.8); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/shuffle-icon.svg\") 0 0 0 0 stretch stretch")
     else:
         log("[   OK   ] Shuffle enabled")
         shuffle=True
         shuffleAction.setChecked(True)
+        shuffleActionTray.setChecked(True)
         buttons['shuffle'].setStyleSheet("background-color: rgba(20, 170, 170, 1.0); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/shuffle-icon.svg\") 0 0 0 0 stretch stretch")
         
 def toReplay():
@@ -1055,18 +1416,20 @@ def toReplay():
         log("[   OK   ] Replay disabled")
         replay=False
         replayAction.setChecked(False)
+        replayActionTray.setChecked(False)
         buttons['replay'].setStyleSheet("background-color: rgba(255, 255, 255, 0.8); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/replay-icon.svg\") 0 0 0 0 stretch stretch")
     else:
         log("[   OK   ] Replay enabled")
         replay=True
         replayAction.setChecked(True)
+        replayActionTray.setChecked(True)
         buttons['replay'].setStyleSheet("background-color: rgba(20, 170, 170, 1.0); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/replay-icon.svg\") 0 0 0 0 stretch stretch")
 
 def toPlay(finalized=False, track=0):
-    global playing, buttons, files, t, seekerValueManuallyChanged
+    global playing, buttons, t, seekerValueManuallyChanged
     if(not playing):
         log("[   OK   ] Playing")
-        if(files==[]):
+        if(mainList.topLevelItemCount()==0):
             log('[   OK   ] Calling openFile()...')
             openFile()
         else:
@@ -1079,8 +1442,11 @@ def toPlay(finalized=False, track=0):
         else:
             log("[  WARN  ] Player already running!")
         buttons['play'].setStyleSheet("background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/pause-icon.svg\") 0 0 0 0 stretch stretch")
+        if(_platform=='win32'):
+            WindowPlayButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/pause-bar.ico"))
     else:
         log("[   OK   ] Sending pause signal...")
+        albumArt.setPixmap(QtGui.QPixmap(realpath+"/icon.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
         playing=False
         toStyleMainList()
         if(finalized):
@@ -1089,30 +1455,49 @@ def toPlay(finalized=False, track=0):
             seekerValueManuallyChanged = False
             refreshProgressbar(0)
         buttons['play'].setStyleSheet("background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/play-icon.svg\") 0 0 0 0 stretch stretch")
+        if(_platform=='win32'):
+            WindowPlayButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/play-bar.ico"))
 
 def toSkip():
     log('[   OK   ] Setting skip signal...')
     global skipped
     skipped=True
+    toStrictlyPlay()
 
 def toGoBack():
     log('[   OK   ] Setting goBack signal...')
     global goBack
     goBack=True
+    toStrictlyPlay()
 
 def toMute():
     global volume, muted, buttons, sliders
     if(muted):
         log("[   OK   ] Unmuting...")
+        playProcess.setMuted(False)
         muted=False
-        sliders['volume'].setStyleSheet('QSlider {height: 2px;background-color: none;}QSlider::handle{background-color: rgba(10, 150, 150, 1.0);border: 0px solid rgba(00, 120, 120, 1.0);border-radius: 7px;}QSlider::add-page:horizontal{background-color: white;border: 1px solid #DDDDDD;border-radius: 2px;}QSlider::sub-page:horizontal{background-color: rgba(20, 170, 170, 1.0);border: 1px solid rgba(10, 150, 150, 1.0);border-radius: 2px;}')
+        muteActionTray.setChecked(False)
+        muteAction.setChecked(False)
+        sliders['volume'].setObjectName("normal-slider")
+        sliders['volume'].setStyleSheet(getWindowStyleSheet())
         buttons['audio'].setStyleSheet("background-color: rgba(255, 255, 255, 0.7); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/audio-icon.svg\") 0 0 0 0 stretch stretch")
     else:
         log("[   OK   ] Muting...")
+        playProcess.setMuted(True)
         muted=True
-        sliders['volume'].setStyleSheet('QSlider {height: 2px;background-color: none;}QSlider::handle{background-color: rgba(170, 170, 170, 1.0);border: 0px solid rgba(170, 170, 170, 1.0);border-radius: 7px;}QSlider::add-page:horizontal{background-color: white;border: 1px solid #DDDDDD;border-radius: 2px;}QSlider::sub-page:horizontal{background-color: rgba(200, 200, 200, 1.0);border: 1px solid rgba(150, 150, 150, 1.0);border-radius: 2px;}')
+        muteActionTray.setChecked(True)
+        muteAction.setChecked(True)
+        sliders['volume'].setObjectName("disabled-slider")
+        sliders['volume'].setStyleSheet(getWindowStyleSheet())
         buttons['audio'].setStyleSheet("background-color: rgba(20, 170, 170, 1.0); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/audio-off-icon.svg\") 0 0 0 0 stretch stretch")
     changeVolume()
+
+def increaseVolume():
+    sliders['volume'].setValue(sliders['volume'].value()+5)
+
+def decreaseVolume():
+    sliders['volume'].setValue(sliders['volume'].value()-5)
+
 
 def changeVolume():
     global volume, muted, buttons, sliders, playing, justContinue, passedTime
@@ -1121,28 +1506,34 @@ def changeVolume():
     if(volume>100):
         volume=100
     if(playing):
-        justContinue = True
-        passedTime = playedTime
+        playProcess.setVolume(volume)
 
-def getVolume():
-    global volume, muted
-    log('[   OK   ] Volume is set to {0}% returning value -{1}dB'.format(volume, (100-volume)/2))
-    if(volume==0 or muted):
-        return 500
-    return (100-volume)/2
 
 def toPauseAndStopSeeking():
-    toStrictlyPause()
     stopSeeking()
 
 def openFile():
-    icon="icon-sptmusic-128.png"
-    global files, music, elementNumber
+    global music, elementNumber
     try:
         log('[        ] Dialog in process')
         
-        music.show()
-        filepaths = QtWidgets.QFileDialog.getOpenFileNames(music, "Select a music file", '', music_files)
+        showMusic()
+        try:
+            os.chdir(os.path.expanduser("~"))
+            os.chdir("SomePythonThings Music")
+        except FileNotFoundError:
+            os.mkdir("SomePythonThings Music")
+            os.chdir("SomePythonThings Music")
+        path = os.getcwd()
+        dialog = QtWidgets.QFileDialog(music)
+        dialog.setAutoFillBackground(True)
+        dialog.setWindowModality(QtCore.Qt.WindowModal)
+        dialog.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        dialog.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        dialog.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+        dialog.setModal(True)
+        dialog.setSizeGripEnabled(False)
+        filepaths = dialog.getOpenFileNames(music, "SomePythonThings Music - Open media files", path, music_files)
         log('[   OK   ] Dialog Completed')
         if(filepaths[0] == []):
             log("[  WARN  ] User aborted dialog")
@@ -1152,7 +1543,6 @@ def openFile():
             filename = file.name
             file.close()
             try:
-                files.append(filename)
                 log('[   OK   ] File "'+str(filename)+'" processed')
             except Exception as e:
                 if debugging:
@@ -1162,8 +1552,15 @@ def openFile():
                     file.close()
                 except:
                     pass
-            newItem =  QtWidgets.QListWidgetItem(QtGui.QIcon(str(realpath)+"/"+str(icon)), getSongTitle(filename))
-            lists['main'].addItem(newItem)
+            newItem =  QtWidgets.QTreeWidgetItem()
+            newItem
+            newItem.setIcon(0, QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(filename)))
+            newItem.setText(0, getSongTitle(filename))
+            newItem.setText(1, str(datetime.timedelta(seconds=int(getLenght(filename)))))
+            newItem.setText(2, filename.replace("\\", "/"))
+            newItem.setText(3, "{0:.3f} MB".format(os.path.getsize(filename)/1000000))
+            newItem.setText(4, getFileType(filename).lower())
+            mainList.addTopLevelItem(newItem)
             elementNumber += 1
     except Exception as e:
         if debugging:
@@ -1171,15 +1568,25 @@ def openFile():
         throw_error("SomePythonThings Music", "An error occurred while selecting one or more files. \n\nError detsils: "+str(e))
 
 def addFile(filepath):
-    icon="icon-sptmusic-128.png"
-    global files, music, elementNumber
+    global music, elementNumber
     try:
         file = open(filepath, 'r')
         filename = file.name
         file.close()
         try:
-            files.append(filename)
             log('[   OK   ] File "'+str(filename)+'" processed')
+            newItem =  QtWidgets.QTreeWidgetItem()
+            newItem.setIcon(0, QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(filename)))
+            newItem.setText(0, getSongTitle(filename))
+            newItem.setText(1, str(datetime.timedelta(seconds=int(getLenght(filename)))))
+            newItem.setText(2, filename.replace("\\", "/"))
+            newItem.setText(3, "{0:.3f} MB".format(os.path.getsize(filename)/1000000))
+            newItem.setText(4, getFileType(filename).lower())
+            if (mainList.findItems(filename.replace("\\", "/"), QtCore.Qt.MatchFlags(QtCore.Qt.MatchCaseSensitive), 2) == []):
+                mainList.addTopLevelItem(newItem)
+                elementNumber += 1
+            else:
+                log("[  WARN  ] File already in!")
         except Exception as e:
             if debugging:
                 raise e
@@ -1188,9 +1595,6 @@ def addFile(filepath):
                 file.close()
             except:
                 pass
-        newItem =  QtWidgets.QListWidgetItem(QtGui.QIcon(str(realpath)+"/"+str(icon)), getSongTitle(filename))
-        lists['main'].addItem(newItem)
-        elementNumber += 1
     except Exception as e:
         if debugging:
             raise e
@@ -1207,11 +1611,11 @@ def toStrictlyPause():
     if(playing):
         toPlay()
         try:
-            killFfplay()
+            killPlayProcess()
         except AttributeError:
             pass
 
-def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', mode='auto'):
+def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', mode='auto', volume=100, showTrackNotification=True, showEndNotification=True):
     global defaultSettings
     try:
         os.chdir(os.path.expanduser('~'))
@@ -1231,13 +1635,14 @@ def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', 
             settingsFile = open('settings.conf', 'w')
             settingsFile.write(str({
                 "settings_version": actualVersion,
-                "minimize_to_tray":minimize_to_tray,
-                "bakcgroundPicture":bakcgroundPicture,
+                "minimize_to_tray": minimize_to_tray,
+                "volume": volume,
+                "showTrackNotification": showTrackNotification,
+                "showEndNotification": showEndNotification,
+                "bakcgroundPicture": bakcgroundPicture,
                 "mode":mode,
                 }))
             settingsFile.close()
-            if(not(silent)):
-                throw_info("SomePythonThings Music", "Settings saved successfuly")
             log("[   OK   ] Settings saved successfully")
             return True
         except Exception as e:
@@ -1286,46 +1691,79 @@ def openSettings():
 def openSettingsWindow():
     global music, settings, settingsWindow
     settingsWindow = Window(music)
-    settingsWindow.setMinimumSize(400, 200)
-    settingsWindow.setMaximumSize(400, 200)
+    settingsWindow.setMinimumSize(500, 300)
+    settingsWindow.setMaximumSize(500, 300)
     settingsWindow.setWindowTitle("SomePythonThings Music Settings")
     settingsWindow.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
     settingsWindow.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, False)
     settingsWindow.setWindowModality(QtCore.Qt.ApplicationModal)
+    settingsWindow.setAutoFillBackground(True)
+    settingsWindow.setWindowModality(QtCore.Qt.WindowModal)
+    settingsWindow.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    settingsWindow.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+    settingsWindow.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+
     modeSelector = QtWidgets.QComboBox(settingsWindow)
     modeSelector.insertItem(0, 'Light')
     modeSelector.insertItem(1, 'Dark')
-    if(_platform=='darwin'):
+    if(_platform!='linux'):
         modeSelector.insertItem(2, 'Auto')
     modeSelector.resize(230, 30)
-    modeSelector.move(150, 20)
+    modeSelector.move(250, 20)
     modeSelectorLabel = QtWidgets.QLabel(settingsWindow)
     modeSelectorLabel.setText("Application mode: ")
     modeSelectorLabel.move(20, 20)
     modeSelectorLabel.setObjectName('settingsBackground')
-    modeSelectorLabel.resize(130, 30)
+    modeSelectorLabel.resize(230, 30)
+
     traySelector = QtWidgets.QComboBox(settingsWindow)
     traySelector.insertItem(0, 'Quit SomePythonThings Music')
     traySelector.insertItem(1, 'Minimize to System Tray')
     traySelector.resize(230, 30)
-    traySelector.move(150, 60)
+    traySelector.move(250, 60)
     traySelectorLabel = QtWidgets.QLabel(settingsWindow)
     traySelectorLabel.setText("✖ button action: ")
     traySelectorLabel.move(20, 60)
     traySelectorLabel.setObjectName('settingsBackground')
-    traySelectorLabel.resize(130, 30)
+    traySelectorLabel.resize(230, 30)
+
+
+    volumeSpinner = QtWidgets.QSpinBox(settingsWindow)
+    volumeSpinner.setRange(0, 100)
+    volumeSpinner.resize(230, 30)
+    volumeSpinner.setSuffix("%")
+    volumeSpinner.setSingleStep(5)
+    volumeSpinner.move(250, 100)
+    volumeSpinnerLabel = QtWidgets.QLabel(settingsWindow)
+    volumeSpinnerLabel.setText("Default volume: ")
+    volumeSpinnerLabel.move(20, 100)
+    volumeSpinnerLabel.setObjectName('settingsBackground')
+    volumeSpinnerLabel.resize(230, 30)
+
+    trackNotifier = QtWidgets.QCheckBox(settingsWindow)
+    trackNotifier.resize(460, 30)
+    trackNotifier.move(20, 140)
+    trackNotifier.setObjectName('settingsCheckbox')
+    trackNotifier.setText("Show a notification when a new track starts")
+
+    endNotifier = QtWidgets.QCheckBox(settingsWindow)
+    endNotifier.resize(460, 30)
+    endNotifier.move(20, 180)
+    endNotifier.setObjectName('settingsCheckbox')
+    endNotifier.setText("Show a notification when the playlist finishes")
+
     saveButton = QtWidgets.QPushButton(settingsWindow)
     saveButton.setText("Save settings and close")
-    saveButton.resize(360, 40)
-    saveButton.move(20, 140)
+    saveButton.resize(460, 40)
+    saveButton.move(20, 240)
     saveButton.setObjectName('squarePurpleButton')
-    saveButton.clicked.connect(partial(saveAndCloseSettings, modeSelector, traySelector, settingsWindow))
+    saveButton.clicked.connect(partial(saveAndCloseSettings, modeSelector, traySelector, volumeSpinner, settingsWindow, trackNotifier, endNotifier))
 
     try:
         if(settings['mode'].lower() == 'light'):
             modeSelector.setCurrentIndex(0)
         elif(settings['mode'].lower() == 'auto'):
-            if(_platform=='darwin'):
+            if(_platform!='linux'):
                 modeSelector.setCurrentIndex(2)
             else:
                 modeSelector.setCurrentIndex(0)
@@ -1345,10 +1783,27 @@ def openSettingsWindow():
             log("[  WARN  ] Could not detect close action!")
     except KeyError:
         log("[  WARN  ] Could not detect close action!")
+    
+    try:
+        volumeSpinner.setValue(settings["volume"])
+    except KeyError:
+        volumeSpinner.setValue(100)
+        log("[  WARN  ] Could not detect default volume value!")
+
+    try:
+        trackNotifier.setChecked(settings["showTrackNotification"])
+    except KeyError:
+        log("[  WARN  ] Could not detect track notification value!")
+
+    try:
+        endNotifier.setChecked(settings["showEndNotification"])
+    except KeyError:
+        log("[  WARN  ] Could not detect end notification value!")
+
 
     settingsWindow.show()
 
-def saveAndCloseSettings(modeSelector, traySelector, settingsWindow):
+def saveAndCloseSettings(modeSelector: QtWidgets.QComboBox, traySelector: QtWidgets.QComboBox, volumeSpinner: QtWidgets.QSpinBox, settingsWindow, trackNotifier: QtWidgets.QCheckBox, endNotifier: QtWidgets.QCheckBox):
     global settings, forceClose
     if(traySelector.currentIndex() == 1):
         settings['minimize_to_tray'] = True
@@ -1360,44 +1815,73 @@ def saveAndCloseSettings(modeSelector, traySelector, settingsWindow):
         settings['mode'] = 'dark'
     else:
         settings['mode'] = 'auto'
+    settings["volume"] = volumeSpinner.value()
+    settings["showTrackNotification"] = trackNotifier.isChecked()
+    settings["showEndNotification"] = endNotifier.isChecked()
     forceClose = True
     settingsWindow.close()
-    music.setStyleSheet(getWindowStyleScheme())
-    saveSettings(silent=False, minimize_to_tray=settings['minimize_to_tray'], bakcgroundPicture=settings['bakcgroundPicture'], mode=settings['mode'])
+    music.setStyleSheet(getWindowStyleSheet())
+    saveSettings(silent=False, minimize_to_tray=settings['minimize_to_tray'], bakcgroundPicture=settings['bakcgroundPicture'], mode=settings['mode'], volume=settings['volume'], showTrackNotification=settings['showTrackNotification'], showEndNotification=settings['showEndNotification'])
 
 def getLenght(file):
     global debugging
-    if(_platform=='win32'):
-        process = subprocess.Popen(['ffmpeg',  '-i', file], shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        stdout, stderr = process.communicate()
-        match = re.search(b"Duration:\s{1}(?P<hours>\d+?):(?P<minutes>\d+?):(?P<seconds>\d+\.\d+?),", stdout, re.DOTALL)
-        if match:
-            matches = match.groupdict()
-        else:
-            matches = {}
+    try:
+        return mutagen.File(filename=file).info.length
+    except AttributeError:
+        log(f"[ FAILED ] Unable to get file {file} length!")
+        return 0
+
+
+def openOnExplorer(file, force=True):
+    if    (_platform == 'win32'):
         try:
-            return float(float(matches['seconds'].decode("utf-8"))+float(matches['minutes'].decode("utf-8"))*60+float(matches['hours'].decode("utf-8"))*3600)
-        except KeyError as e:
-            if(debugging):
-                raise e
-    else:
-        metadata = subprocess.check_output(['ffprobe', '-i', file, '-v', 'quiet', '-print_format', 'json', '-show_format', '-hide_banner'])
-        metadata = json.loads(metadata)
-        return float(metadata['format']['duration'])
+            os.system('start explorer /select,"{0}"'.format(file.replace("/", "\\")))
+        except:
+            log("[  WARN  ] Unable to show file {0} on file explorer.".format(file))
+    elif (_platform == 'darwin'):
+        if(force):
+            try:
+                os.system('open "'+file+'"')
+            except:
+                log("[  WARN  ] Unable to show file {0} on finder.".format(file))
+        else:
+            try:
+                os.system("open "+("/".join(str(file).split("/")[:-1])))
+            except:
+                log("[  WARN  ] Unable to show file {0} on finder.".format(file))
 
+    elif (_platform == 'linux' or _platform == 'linux2'):
+        try:
+            t = Thread(target=os.system, args=("xdg-open "+file,))
+            t.daemon=True
+            t.start()
+        except:
+            log("[  WARN  ] Unable to show file {0} on default file explorer.".format(file))
 
+def openLog():
+    log("[        ] Opening log...")
+    os_info = f"" + \
+    f"                        OS: {platform.system()}\n"+\
+    f"                   Release: {platform.release()}\n"+\
+    f"           OS Architecture: {platform.machine()}\n"+\
+    f"          APP Architecture: {platform.architecture()[0]}\n"+\
+    f"                   Program: SomePythonThings Music Version {actualVersion}"+\
+    "\n\n-----------------------------------------------------------------------------------------"
+    webbrowser.open("https://www.somepythonthings.tk/error-report/?appName=SomePythonThings Music&errorBody="+os_info.replace('\n', '{newline}').replace(' ', '{space}')+"{newline}{newline}{newline}{newline}SomePythonThings Music Log:{newline}"+str(logHistory+"\n\n\n\n").replace('\n', '{newline}').replace(' ', '{space}'))
+    
 
 def getFileType(file): #from file.mp3, returns MP3, from file.FiLeExT, returns FILEEXT 
     return file.split('.')[-1].upper()
     
 def getSongTitle(file):
-    return str(file.replace('\\', '/').split('/')[-1])
+    return str(file.replace('\\', '/').split('/')[-1]).replace("."+file.split('.')[-1], '')
 
 def startPlayback(track=0):
-    global files, labels, skipped, playerIsRunning, playProcess, goBack, playing, trackNumber, replay, lastConvertedTrack, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, playedTime, song_length
+    global labels, skipped, playerIsRunning, playProcess, goBack, playing, trackNumber, replay, blockPlay, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, song_length
     playerIsRunning = True
     stopped=False
     skipped=False
+    lastTrack=""
     goBack = False
     passedTime = 0.0
     alreadyPlayed = []
@@ -1405,95 +1889,135 @@ def startPlayback(track=0):
         trackNumber=track
     else:
         trackNumber=0
-    lastConvertedTrack = ''
-    #songToPlay = ''
+    del track
     try:
-        if(len(files) == 0):
-            #get_updater().call_in_main(toPlay, True)
+        if(mainList.topLevelItemCount() == 0):
             playerIsRunning = False
             replay = False
             toStrictlyPause()
             try:        
-                killFfplay()
+                killPlayProcess()
             except AttributeError:
                 pass
             sys.exit()
-        while trackNumber<len(files):
+        while trackNumber<mainList.topLevelItemCount():
             log('[        ] Starting new play round, index is {0}'.format(str(trackNumber)))
             if not stopped:
-                track = files[trackNumber]
+                import time
+                track = mainList.topLevelItem(trackNumber).text(2)
                 log('[        ] Track number {0}'.format(trackNumber))
                 log('[        ] Actual track file is '+str(track))
-                log('[        ] Actual track filename is  '+getSongTitle(track))
-                song_length = getLenght(track)
-                get_updater().call_in_main(labels['totaltime'].setText, str(datetime.timedelta(seconds=int(song_length))))
-                filename=getSongTitle(track)
-                get_updater().call_latest(labels['songname'].setText, filename)
                 log('[        ] Start time is {0} ms'.format(passedTime*1000))
-                playFile(track, time=passedTime)
-                log('[   OK   ] Playing (play line is passed)')
+                song_length = getLenght(track)
+                filename = getSongTitle(track)
+
+                get_updater().call_in_main(labels['totaltime'].setText, str(datetime.timedelta(seconds=int(song_length))))
+                get_updater().call_latest(labels['songname'].setText, filename)
+
+                try:
+                    showNofitication = settings["showTrackNotification"]
+                except KeyError:
+                    showNofitication = True
+                if(showNofitication):
+                    if(lastTrack != track):
+                        lastTrack=track
+                        log("[   OK   ] Shwowing notification...")
+                        get_updater().call_in_main(notify, "SomePythonThings Music", getSongTitle(track))
+                        time.sleep(0.5)
+                albumArt.setPixmap(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(track)).pixmap(256, 256).scaledToHeight(96, QtCore.Qt.SmoothTransformation))
+
+                log("[        ] Calling play thread...")
+                blockPlay = True
+                get_updater().call_in_main(playFile, track, passedTime=passedTime)
+                while blockPlay:
+                    pass
+
+                log("[   OK   ] Continuing play process, play line passed")
+
                 alreadyPlayed.append(trackNumber)
-                buttons['play'].setStyleSheet("background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/pause-icon.svg\") 0 0 0 0 stretch stretch")
-                toStyleMainList()
-                import time
-                starttime = time.time()
-                lenght = getLenght(track)
-                totalTime = lenght-passedTime
-                pausedAt = 0
-                playedTime = 0
+                get_updater().call_in_main(buttons['play'].setStyleSheet, "background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/pause-icon.svg\") 0 0 0 0 stretch stretch")
+                if(_platform=='win32'):
+                    WindowPlayButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/pause-bar.ico"))
+                get_updater().call_in_main(toStyleMainList)
+
+                msPlayed = 0
+                lenght = getLenght(track)*1000
+                percentagePlayed = 0
+                oldPos = -500
+                repatedPositions = -4
+
                 while(True):
-                    firsttime = time.time()
-                    playedTime = time.time()-starttime+passedTime
-                    get_updater().call_in_main(labels['actualtime'].setText, str(datetime.timedelta(seconds=int(playedTime))))
+                    msPlayed = playProcess.position()
+                    if(lenght!=0):
+                        percentagePlayed = msPlayed/lenght*100
+                    loopStartTime = time.time()
+                    get_updater().call_in_main(labels['actualtime'].setText, str(datetime.timedelta(seconds=int(msPlayed/1000))))
+
                     if(seeking):
                         seekerValueManuallyChanged = False
-                        refreshProgressbar(playedTime*1000/(totalTime+passedTime))
-                        #get_updater().call_in_main(sliders['seeker'].setValue, playedTime*1000/(totalTime+passedTime))
-                    time.sleep(0.05 - 0*(time.time()-firsttime))
+                        refreshProgressbar(percentagePlayed*10)
+
+
                     if(not(playing)):
-                        killFfplay()
-                        pausedAt = time.time()-starttime+passedTime
+                        playProcess.pause()
+                        get_updater().call_in_main(toStyleMainList)
                         log('[   OK   ] Paused at moment {}'.format((time.time()-starttime)))
-                        stopped=True
                         while not(playing):
-                            continue
+                            pass
+                        albumArt.setPixmap(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(track)).pixmap(256, 256).scaledToHeight(96, QtCore.Qt.SmoothTransformation))
                         log('[        ] Continuing playback...')
-                        break
+                        playProcess.play()
+                        get_updater().call_in_main(toStyleMainList)
+
                     if(skipped):
                         log('[        ] Skipping...')
-                        killFfplay()
+                        killPlayProcess()
                         break
+
                     if(goBack):
                         log('[        ] Going back...')
-                        killFfplay()
+                        killPlayProcess()
                         break
+
                     if(justContinue):
-                        killFfplay()
+                        killPlayProcess()
                         log('[        ] Passing away...')
                         break
-                    if(lenght<=playedTime):
-                        log('[  KILL  ] Killing play bucle...')
+
+                    if(oldPos==msPlayed):
+                        repatedPositions += 1
+                    else:
+                        repatedPositions = 0
+
+                    if(lenght<=msPlayed or (repatedPositions>4 and msPlayed!=0)):
+                        log('[  KILL  ] Killing play bucle, arrived to end...')
                         break
+
+                    toWait = 0.05 - (time.time()-loopStartTime)
+                    if(toWait>0):
+                        time.sleep(toWait)
+                    oldPos = msPlayed
+
                 if(skipped):
                     log('[   OK   ] Skipped')
                     if not(shuffle):
                         trackNumber += 1
                     else:
                         oldTrackNumber = trackNumber
-                        trackNumber = random.randint(0, len(files))
-                        if(len(alreadyPlayed) >= len(files)):
+                        trackNumber = random.randint(0, mainList.topLevelItemCount())
+                        if(len(alreadyPlayed) >= mainList.topLevelItemCount()):
                             toStrictlyPause()
                             alreadyPlayed = []
                         else:
-                            while ((oldTrackNumber==trackNumber and len(files)>1) or trackNumber in alreadyPlayed) and not replay:
-                                trackNumber = random.randint(0, len(files))
+                            while ((oldTrackNumber==trackNumber and mainList.topLevelItemCount()>1) or trackNumber in alreadyPlayed) and not replay:
+                                trackNumber = random.randint(0, mainList.topLevelItemCount())
                     passedTime = 0.0
                     skipped=False
                     continue
                 if(goBack):
-                    log('[   OK   ] Went back.')
-                    if(playedTime-passedTime>3):
-                        trackNumber += 0#Stay on the same track
+                    log('[   OK   ] Went back, actual position is '+str(msPlayed))
+                    if(msPlayed>3000):
+                        pass# Stay on the same track
                     else:
                         trackNumber -= 1
                     if(trackNumber<=0):
@@ -1507,24 +2031,19 @@ def startPlayback(track=0):
                     continue
                 if not(stopped):
                     seekerValueManuallyChanged = False
-                    #get_updater().call_in_main(sliders['seeker'].setValue, 1000)
                     refreshProgressbar(1000)
                     if not(shuffle):
                         trackNumber += 1
                     else:
                         oldTrackNumber = trackNumber
-                        trackNumber = random.randint(0, len(files))
-                        if(len(alreadyPlayed) >= len(files)):
+                        trackNumber = random.randint(0, mainList.topLevelItemCount())
+                        if(len(alreadyPlayed) >= mainList.topLevelItemCount()):
                             toStrictlyPause()
                             alreadyPlayed = []
                         else:
-                            while ((oldTrackNumber==trackNumber and len(files)>1) or trackNumber in alreadyPlayed) and not replay:
-                                trackNumber = random.randint(0, len(files))
+                            while ((oldTrackNumber==trackNumber and mainList.topLevelItemCount()>1) or trackNumber in alreadyPlayed) and not replay:
+                                trackNumber = random.randint(0, mainList.topLevelItemCount())
                     passedTime = 0.0
-                else:
-                    log('[   OK   ] Catched previous stop, setting start time...')
-                    stopped=False
-                    passedTime = pausedAt
             else:
                 log('[        ] Playback is stopped, blocking...')
                 stopped = False
@@ -1534,17 +2053,24 @@ def startPlayback(track=0):
             if replay:
                 startPlayback()
             else:
+                try:
+                    showNofitication = settings["showEndNotification"]
+                except KeyError:
+                    showNofitication = True
+                if(showNofitication):
+                        log("[   OK   ] Shwowing notification...")
+                        get_updater().call_in_main(notify, "SomePythonThings Music", "Playlist has finished!")
                 get_updater().call_in_main(toPlay, True)
         playerIsRunning = False
     except Exception as e:
         try:        
-            killFfplay()
+            killPlayProcess()
         except AttributeError:
             pass
         playerIsRunning = False
         playing = True
         get_updater().call_in_main(toPlay, True)
-        get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred during the playback.\n\nIs the file corrupt or incompatible?\n\nIf the error persists, please consider re-installing ffmpeg by clicking on \"Settings\" menu > \"Re-install ffmpeg\"")
+        get_updater().call_in_main(throw_error, "SomePythonThings Music", "An error occurred during the playback.\n\nIs the file corrupt or incompatible?\n\nError Details: \n"+str(e))
         if(debugging):
             raise e
 
@@ -1555,7 +2081,7 @@ def goToSong():
         log('[  KILL  ] Killing playback thread to start a new one...')
     except AttributeError:
         log('[  WARN  ] Unable to kill thread, thread was not running...')
-    trackNumber = lists['main'].currentRow()
+    trackNumber = mainList.indexOfTopLevelItem(mainList.currentItem())
     if(trackNumber<0):
         trackNumber = 0
     log('[   OK   ] Selected track number {}'.format(trackNumber))
@@ -1564,15 +2090,24 @@ def goToSong():
     toStrictlyPlay(track=trackNumber)
 
 def goToMaybeSpecificTime():
-    global sliders, totalTime, passedTime, justContinue, seeking, seekerValueManuallyChanged, starttime, playedTime, song_length
+    global sliders, totalTime, passedTime, justContinue, seeking, seekerValueManuallyChanged, starttime, song_length
     if(seekerValueManuallyChanged):
-        timeToGo = sliders['seeker'].value()*(song_length)/1000
+        timeToGo = seeker.value()*(song_length)/1000
         log('[        ] Starting goToSpecificTime with time value : '+str(timeToGo))
         justContinue = True
         passedTime=timeToGo
         seekerValueManuallyChanged = False
     else:
         seekerValueManuallyChanged = True
+
+def goToSpecificTime():
+    global sliders, totalTime, passedTime, justContinue, seeking, seekerValueManuallyChanged, starttime, song_length
+    timeToGo = seeker.value()*(song_length)
+    log('[        ] Starting goToSpecificTime with time value (in ms): '+str(timeToGo))
+    playProcess.setPosition(int(timeToGo))
+    startSeeking()
+    passedTime = playProcess.position()/1000
+    seekerValueManuallyChanged = False
 
 def stopSeeking():
     log('[        ] Stopping seeking...')
@@ -1585,12 +2120,17 @@ def startSeeking():
     time.sleep(0.1)
     seeking=True
 
+def getList():
+    for i in range(mainList.topLevelItemCount()):
+        item = mainList.topLevelItem(i)
+        yield item.text(2)
+
 def savePlaylist():
-    global files, music
+    global music
     toStrictlyPause()
     try:
         log('[        ] Asking where to save the playlist...')
-        music.show()
+        showMusic()
         filename = QtWidgets.QFileDialog.getSaveFileName(music, "Save the playlist as...", 'Unnamed Playlist.sptplaylist', ('SomePythonThings Playlist File (*.sptplaylist)'))[0]
         log('[   OK   ] Got string "{0}" from getSaveFileName()'.format(str(filename)))
         if(filename==''):
@@ -1598,14 +2138,8 @@ def savePlaylist():
         else:
             file = open(filename, 'w')
             try:
-                toWrite="""Well, you discovered how to open a SomePythonThings Music Playlist. 
- this file, after the 3 "#", has, by order, all the files contained on the playlist.
- Please be careful when editing this file from a text editor, you could just destroy the .sptplaylist file...
-
-
-
- ###\n"""
-                for element in files:
+                toWrite="""This is a SomePythonThings Music Playlist. This file, after the 3 "#", has, by order, all the files contained on the playlist.Please be careful when editing this file from a text editor, you could just corrupt the file.###\n"""
+                for element in getList():
                     toWrite += str(element)
                     toWrite += "\n"
                 toWrite += "###"
@@ -1622,17 +2156,24 @@ def savePlaylist():
         throw_error('SomePythonThings Music', 'Unable to save playlist.\n\nError details:\n'+str(e))
 
 def removeAllItems():
-    global lists, files
-    while len(files)>0:
+    global lists
+    while mainList.topLevelItemCount()>0:
         try:
-            files.remove(files[0])
-            lists['main'].removeItemWidget(lists['main'].takeItem(0))
+            mainList.clear()
         except Exception as e:
             if(debugging):
                 raise e
 
+def showMusic(reason=QtWidgets.QSystemTrayIcon.Unknown):
+    if(reason != QtWidgets.QSystemTrayIcon.Context):
+        music.show()
+        music.raise_()
+        music.activateWindow()
+        if not(music.isMaximized()):
+            music.showNormal()
+
 def openPlaylist(playlist=''):
-    global files, music, elementNumber
+    global music, elementNumber
     toStrictlyPause()
     removeAllItems()
     log('[        ] Playlist attribute value is {0}'.format(playlist))
@@ -1641,7 +2182,7 @@ def openPlaylist(playlist=''):
         if(playlist == '' or playlist == False):
             log('[        ] Dialog in process')
             
-            music.show()
+            showMusic()
             filepath = QtWidgets.QFileDialog.getOpenFileName(music, "Select a SomePythonThings Playlist file...", '', ('SomePythonThings Playlist file (*.sptplaylist)'))[0]
             log('[   OK   ] Dialog Completed')
             if(filepath == ''):
@@ -1689,8 +2230,9 @@ def refreshProgressbar(value):
             get_updater().call_in_main(taskbprogress.hide)
         else:
             get_updater().call_in_main(taskbprogress.show)
-    get_updater().call_in_main(bottomBar.setValue, value/10)
-    get_updater().call_in_main(sliders['seeker'].setValue, value)
+    get_updater().call_in_main(bottomBar.setValue, value)
+    get_updater().call_in_main(bottomBar.repaint)
+    get_updater().call_in_main(seeker.setValue, value)
 
 def installationProgressBar(action = 'Downloading'):
     global progressbars, texts, music
@@ -1708,43 +2250,70 @@ def installationProgressBar(action = 'Downloading'):
             get_updater().call_in_main(taskbprogress.show)
         get_updater().call_in_main(bottomBar.setRange, 0, 0)
 
-def throw_info(title, body, icon="icon-sptmusic-128.png", exit=False):
+def throw_info(title, body, icon="ok.png", exit=False):
     global music
-    music.show()
+    showMusic()
     log("[  INFO  ] "+body)
     msg = QtWidgets.QMessageBox(music)
-    if(os.path.exists(str(realpath)+"/"+str(icon))):
-        msg.setIconPixmap(QtGui.QPixmap(str(realpath)+"/"+str(icon)))
+    if(os.path.exists(str(realpath)+"/icons-sptmusic/ok.png")):
+        msg.setIconPixmap(QtGui.QPixmap(str(realpath)+"/icons-sptmusic/ok.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
     else:
         msg.setIcon(QtWidgets.QMessageBox.Information)
     msg.setText(body)
+    msg.setAutoFillBackground(True)
+    msg.setWindowModality(QtCore.Qt.WindowModal)
+    msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+    msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+    msg.setModal(True)
+    msg.setSizeGripEnabled(False)
     msg.setWindowTitle(title)
     msg.exec_()
     if(exit):
         try:        
-            killFfplay()
+            killPlayProcess()
         except AttributeError:
             pass
         sys.exit()
 
 def throw_warning(title, body, warning=None):
     global music
-    music.show()
+    showMusic()
     log("[  WARN  ] "+body)
     if(warning != None ):
         log("\t Warning reason: "+warning)
     msg = QtWidgets.QMessageBox(music)
-    msg.setIcon(QtWidgets.QMessageBox.Warning)
+    if(os.path.exists(str(realpath)+"/icons-sptmusic/warn.png")):
+        msg.setIconPixmap(QtGui.QPixmap(str(realpath)+"/icons-sptmusic/warn.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
+    else:
+        msg.setIcon(QtWidgets.QMessageBox.Warning)
+    msg.setAutoFillBackground(True)
+    msg.setWindowModality(QtCore.Qt.WindowModal)
+    msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+    msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+    msg.setModal(True)
+    msg.setSizeGripEnabled(False)
     msg.setText(body)
     msg.setWindowTitle(title)
     msg.exec_()
 
 def throw_error(title, body, error="Not Specified"):
     global music
-    music.show()
+    showMusic()
     log("[  ERROR ] "+body+"\n\tError reason: "+error)
     msg = QtWidgets.QMessageBox(music)
-    msg.setIcon(QtWidgets.QMessageBox.Critical)
+    if(os.path.exists(str(realpath)+"/icons-sptmusic/error.png")):
+        msg.setIconPixmap(QtGui.QPixmap(str(realpath)+"/icons-sptmusic/error.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
+    else:
+        msg.setIcon(QtWidgets.QMessageBox.Critical)
+    msg.setAutoFillBackground(True)
+    msg.setWindowModality(QtCore.Qt.WindowModal)
+    msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+    msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+    msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+    msg.setModal(True)
+    msg.setSizeGripEnabled(False)
     msg.setText(body)
     msg.setWindowTitle(title)
     msg.exec_()
@@ -1758,7 +2327,7 @@ def quitMusic():
     global music
     music.close()
     try:        
-        killFfplay()
+        killPlayProcess()
     except AttributeError:
         pass
     sys.exit()
@@ -1775,42 +2344,20 @@ def openHelp():
     webbrowser.open_new("http://www.somepythonthings.tk/programs/somepythonthings-music/help/")
 
 def about():
-    throw_info("About SomePythonThings Music", "SomePythonThings Music\nVersion "+str(actualVersion)+"\n\nThe SomePythonThings Project\n\n © 2020 Martí Climent, SomePythonThings\nhttps://www.somepythonthings.tk\n\n\nThe iconset has a CC Non-Commercial Atribution 4.0 License", exit=False)
-
-def checkForDependencies(bypassCheck=False):
-    if(_platform == 'win32'):
-        if(run('ffmpeg -version')!=0 or run('ffplay -version')!=0 or bypassCheck):#or run('ffprobe -version')!=0 
-            log('[  WARN  ] FFMPEG not found!')
-            t = Thread(target=download_ffpmeg_win)
-            t.daemon = True
-            t.start()
-        else:
-            log('[   OK   ] FFMPEG library found')
-    elif(_platform=="linux" or _platform=='linux2'):
-        if(os.system('ffmpeg -version')!=0 or os.system('ffplay -version')!=0 or bypassCheck):#or os.system('ffprobe -version')!=0 
-            get_updater().call_in_main(install_ffmpeg_linux_part1)
-            log('[  WARN  ] FFMPEG not found!')
-        else:
-            log('[   OK   ] FFMPEG library found')
-    elif (_platform=='darwin'):
-        if(bypassCheck):
-            t = Thread(target=download_ffmpeg_macOS)
-            t.daemon = True
-            t.start()
+    throw_info("About SomePythonThings Music", "SomePythonThings Music\nVersion "+str(actualVersion)+"\n\nThe SomePythonThings Project\n\n © 2021 Martí Climent, SomePythonThings\nhttps://www.somepythonthings.tk\n\n\nThe iconset has a CC Non-Commercial Atribution 4.0 License", exit=False)
 
 def readArgs(args):
     global t, playerIsRunning
-    try:
-        t.kill()
-    except AttributeError as e:
-        if(debugging):
-            log(e)
-    toStrictlyPause()
-    removeAllItems()
     log('[  ARGS  ] Re-reading args...')
     isThereAFile = False
     i = 0
     if(len(args)>1):
+        removeAllItems()
+        toStrictlyPause()
+        try:
+            t.kill()
+        except AttributeError:
+            pass
         if('SPTPLAYLIST' == getFileType(args[1])):
             openPlaylist(args[1])
             isThereAFile = True
@@ -1908,7 +2455,6 @@ def setProgramAsRunning():
                                 args = f.read().split('///')
                                 f.close()
                                 log('[        ] found args are "{}"...'.format(str(args)))
-                                #readArgs(args)
                                 get_updater().call_in_main(readArgs, args)
                                 os.remove('sys.argv')
                             except Exception as e:
@@ -1938,9 +2484,9 @@ def on_key(key):
     elif key == QtCore.Qt.Key_Plus:
         sliders['volume'].setValue(sliders['volume'].value()+10)
     elif key == QtCore.Qt.Key_Left:
-        sliders['seeker'].setValue(sliders['seeker'].value()-10)
+        seeker.setValue(seeker.value()-10)
     elif key == QtCore.Qt.Key_Right:
-        sliders['seeker'].setValue(sliders['seeker'].value()+10)
+        seeker.setValue(seeker.value()+10)
     elif key == QtCore.Qt.Key_Backspace:
         removeFromPlaylist()
     elif key == QtCore.Qt.Key_Delete:
@@ -1968,7 +2514,6 @@ def resizeWidgets():
     width = music.width()
         
     buttons['play'].resize(50, 50)
-    buttons['play'].setStyleSheet("QPushButton{background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/play-icon.svg\") 0 0 0 0 stretch stretch} QPushButton:checked{background-color: rgba(00, 130, 130, 1.0);}")
     buttons['play'].move(int((width/2)-25), height-110)
     buttons['first-track'].resize(40, 40)
     buttons['first-track'].move(int((width/2)-20)-60, height-105)
@@ -1989,29 +2534,61 @@ def resizeWidgets():
     buttons['save'].resize(150, 30)
     buttons['open'].move(10, 160)
     buttons['open'].resize(150, 30)
+    buttons['youtube'].move(10, 200)
+    buttons['youtube'].resize(150, 30)
 
     sliders['volume'].move(width-145, height-105)
     sliders['volume'].resize(120, 40)
-    sliders['seeker'].move(int((width/2)-200), height-55)
-    sliders['seeker'].resize(400, 40)
+    seeker.move(int((width/2)-200), height-55)
+    seeker.resize(400, 40)
+
     labels['actualtime'].resize(100, 40)
     labels['actualtime'].move(int((width/2)-300), height-49)
     labels['totaltime'].resize(100, 40)
     labels['totaltime'].move(int((width/2)+200), height-49)
-    labels['songname'].resize(width-130-int((width/2)-20)-50, 30)
-    labels['songname'].move(int(20), height-100)
 
-    lists['main'].move(170, 40)
-    lists['main'].resize(width-190, height-180)
+    albumArt.resize(96, 96)
+    albumArt.move(12, height-108)
+
+    labels['songname'].resize(width-250-int((width/2)-20)-50, 30)
+    labels['songname'].move(120, height-100)
+
+    mainList.move(170, 40)
+    mainList.resize(width-190, height-180)
 
     log("[   OK   ] Resizing content to fit "+str(width)+'x'+str(height))
     bottomBar.resize(width, 120)
     bottomBar.move(0, height-120)
 
-# main code
+def openLibrary():
+    openOnExplorer(os.path.expanduser("~").replace("\\", '/')+"/SomePythonThings Music/", force=True)
+
+def load_library():
+    global music_extensions, log, addFile
+    try:
+        os.chdir(os.path.expanduser("~"))
+        os.chdir("SomePythonThings Music")
+        path = os.getcwd()
+        for fileext in music_extensions:
+            for file in glob.glob(path+"/"+fileext):
+                log("[   OK   ] Adding file "+os.path.abspath(file))
+                addFile(os.path.abspath(file))
+    except FileNotFoundError:
+        pass
+    
+
+# ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+# ---------------------------------------------------------------------------------- Main Code ---------------------------------------------------------------------------------- #
 if __name__ == '__main__':
 
     Thread(target=setProgramAsRunning, daemon=True).start()
+    
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+
+    QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
+    
+
+    os.chdir(os.path.expanduser("~"))
 
     if(len(sys.argv)>1):
         arg = sys.argv[1]
@@ -2029,7 +2606,7 @@ if __name__ == '__main__':
 
     elif _platform == "darwin":
         log("[   OK   ] OS detected is macOS")
-        font = "Lucida Grande"
+        font = "Helvetica Neue"
         realpath = "/Applications/SomePythonThings Music.app/Contents/Resources/resources-sptmusic"
     
     elif _platform == "win32":
@@ -2067,8 +2644,8 @@ if __name__ == '__main__':
             QtCore.QMetaObject.connectSlotsByName(MainWindow)
 
     class Window(QtWidgets.QMainWindow):
-        resized = QtCore.pyqtSignal()
-        keyRelease = QtCore.pyqtSignal(int)
+        resized = QtCore.Signal()
+        keyRelease = QtCore.Signal(int)
 
         def __init__(self, parent=None):
             super(Window, self).__init__(parent=parent)
@@ -2084,20 +2661,19 @@ if __name__ == '__main__':
         def keyReleaseEvent(self, event):
             log('[ EVENTS ] keyRelease activated.')
             if(not(event.key()==QtCore.Qt.Key_Up) and not(event.key()==QtCore.Qt.Key_Down)):
-                lists['main'].clearFocus()
+                mainList.clearFocus()
                 buttons['play'].clearFocus()
                 buttons['replay'].clearFocus()
                 buttons['shuffle'].clearFocus()
                 buttons['last-track'].clearFocus()
                 buttons['first-track'].clearFocus()
                 sliders['volume'].clearFocus()
-                sliders['seeker'].clearFocus()
+                seeker.clearFocus()
                 super(Window, self).keyReleaseEvent(event)
                 self.keyRelease.emit(event.key())
         
         def _focusInEvent(self):
             log('[ EVENTS ] focusInEvent activated.')
-            #self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, False)
         
         def closeEvent(self, event):
             log('[ EVENTS ] closeEvent activated.')
@@ -2118,8 +2694,68 @@ if __name__ == '__main__':
                 pass
             return False
         
+    class ClosableWindow(QtWidgets.QMainWindow):
+        resized = QtCore.Signal()
+        keyRelease = QtCore.Signal(int)
 
+        def __init__(self, parent=None):
+            super(ClosableWindow, self).__init__(parent=parent)
+            ui = Ui_MainWindow()
+            ui.setupUi(self)
+            self.resized.connect(resizeWidgets)
+            self.installEventFilter(self)
+            
+        def resizeEvent(self, event):
+            self.resized.emit()
+            return super(Window, self).resizeEvent(event)
+
+        def keyReleaseEvent(self, event):
+            log('[ EVENTS ] keyRelease activated.')
+            if(not(event.key()==QtCore.Qt.Key_Up) and not(event.key()==QtCore.Qt.Key_Down)):
+                mainList.clearFocus()
+                buttons['play'].clearFocus()
+                buttons['replay'].clearFocus()
+                buttons['shuffle'].clearFocus()
+                buttons['last-track'].clearFocus()
+                buttons['first-track'].clearFocus()
+                sliders['volume'].clearFocus()
+                seeker.clearFocus()
+                super(Window, self).keyReleaseEvent(event)
+                self.keyRelease.emit(event.key())
+        
+        def _focusInEvent(self):
+            log('[ EVENTS ] focusInEvent activated.')
+        
+        def eventFilter(self, object, event):
+            try:
+                if event.type() == QtCore.QEvent.WindowActivate or event.type() == QtCore.QEvent.FocusIn:
+                    self._focusInEvent()
+            except KeyboardInterrupt:
+                pass
+            return False
     
+    class TreeWidget(QtWidgets.QTreeWidget):
+
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+            self.setDropIndicatorShown(True)
+            self.setAcceptDrops(True)
+            self.setSupportedDropActions = QtCore.Qt.CopyAction | QtCore.Qt.MoveAction
+
+        def dragEnterEvent(self, e):
+            e.accept()
+
+        def dragMoveEvent(self, e):
+            e.accept()
+
+        def dropEvent(self, e):
+            for file in e.mimeData().text().replace("file://", "").split("\n"):
+                if(_platform=="win32" and len(file)>1):
+                    if(file[0] == "/"):
+                        file = file[1:]
+                if(file != ""):
+                    addFile(str(file))
 
     class KillableThread(Thread): 
         def __init__(self, *args, **keywords): 
@@ -2148,6 +2784,12 @@ if __name__ == '__main__':
                 raise SystemExit() 
             return self.localtrace
 
+    class NonScrollableSlider(QtWidgets.QSlider):
+        def __init__(self, orientation, parent):
+            super(NonScrollableSlider, self).__init__(orientation, parent)
+
+        def wheelEvent(self, event):
+            event.ignore()
 
     QtWidgets.QApplication.setStyle('fusion')
     app = QtWidgets.QApplication(sys.argv)
@@ -2171,19 +2813,25 @@ if __name__ == '__main__':
             log("[   OK   ] Settings loaded (settings={0})".format(str(settings)))
         except Exception as e:
             log("[ FAILED ] Unable to read settings! ({0})".format(str(e)))
-            settings = defaultSettings
             if(debugging):
                 raise e
 
+        try:
+            volume = settings["volume"]
+        except KeyError:
+            log("[  WARN  ] Volume value not found on settings")
 
-        music.setMinimumSize(700, 330)
-        music.setStyleSheet(getWindowStyleScheme())
+        music.setMinimumSize(700, 370)
+        music.setStyleSheet(getWindowStyleSheet())
 
         bottomBar = QtWidgets.QProgressBar(music)
         bottomBar.setTextVisible(False)
         bottomBar.setMinimum(0)
-        bottomBar.setMaximum(100)
+        bottomBar.setMaximum(1000)
         bottomBar.setValue(0)
+
+        playProcess = QtMultimedia.QMediaPlayer(music)
+        playProcess.setAudioRole(QtMultimedia.QAudio.MusicRole)
 
         i = 10
         for button in ['audio', 'replay', 'first-track', 'play', 'last-track', 'shuffle']:
@@ -2192,6 +2840,9 @@ if __name__ == '__main__':
             i += 50
             buttons[button].resize(50, 50)
             buttons[button].setStyleSheet("QPushButton{background-color: rgba(255, 255, 255, 0.8); border-radius: 20px; border-image: url(\""+realpath+"/icons-sptmusic/"+button+"-icon.svg\") 0 0 0 0 stretch stretch } QPushButton:clicked{background-color: rgba(00, 130, 130, 1.0);}")
+
+        buttons['play'].setStyleSheet("QPushButton{background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/play-icon.svg\") 0 0 0 0 stretch stretch} QPushButton:checked{background-color: rgba(00, 130, 130, 1.0);}")
+    
 
         buttons['shuffle'].clicked.connect(toShuffle)
         buttons['replay'].clicked.connect(toReplay)
@@ -2213,13 +2864,24 @@ if __name__ == '__main__':
         buttons['open'].setText('Open playlist file')
         buttons['open'].clicked.connect(openPlaylist)
         
-        buttons['delete'].setObjectName("squareRedButton")#.setStyleSheet("""QPushButton{border-radius: 0px;border: none;background-color: rgba(255, 255, 255, 0.5);color: black;}QPushButton:hover{background-color: rgba(255, 0, 0, 0.5);color: white;}""")
+        buttons['delete'].setObjectName("squareRedButton")
+        buttons['delete'].setToolTip("Remove files from playlist, not from computer")
         
-        buttons['add'].setObjectName("squarePurpleButton")#.setStyleSheet("""QPushButton{border-radius: 0px;border: none;background-color: rgba(255, 255, 255, 0.5);color: black;}QPushButton:hover{background-color: rgba(20, 170, 150, 0.7);color: white;}""")
-        
-        buttons['save'].setObjectName("squarePurpleButton")#.setStyleSheet("""QPushButton{border-radius: 0px;border: none;background-color: rgba(255, 255, 255, 0.5);color: black;}QPushButton:hover{background-color: rgba(20, 170, 150, 0.7);color: white;}""")
+        buttons['add'].setObjectName("squarePurpleButton")
+        buttons['add'].setToolTip("Add local audio files")
 
-        buttons['open'].setObjectName("squarePurpleButton")#.setStyleSheet("""QPushButton{border-radius: 0px;border: none;background-color: rgba(255, 255, 255, 0.5);color: black;}QPushButton:hover{background-color: rgba(20, 170, 150, 0.7);color: white;}""")
+        buttons['save'].setObjectName("squarePurpleButton")
+        buttons['save'].setToolTip("Save the current playlist")
+
+        buttons['open'].setObjectName("squarePurpleButton")
+        buttons['open'].setToolTip("Open a playlist file")
+
+        
+        buttons['youtube'] = QtWidgets.QPushButton(music)
+        buttons['youtube'].setText('Download music')
+        buttons['youtube'].clicked.connect(youtubeWindow)
+        buttons['youtube'].setObjectName("squarePurpleButton")
+        buttons['youtube'].setToolTip("Download music from Youtube servers")
 
         sliders['volume'] = QtWidgets.QSlider(QtCore.Qt.Horizontal, music)
         sliders['volume'].setMinimum(0)
@@ -2227,12 +2889,11 @@ if __name__ == '__main__':
         sliders['volume'].setValue(volume)
         sliders['volume'].valueChanged.connect(changeVolume)
 
-        sliders['seeker'] = QtWidgets.QSlider(QtCore.Qt.Horizontal, music)
-        sliders['seeker'].setMinimum(0)
-        sliders['seeker'].setMaximum(1000)
-        sliders['seeker'].sliderPressed.connect(toPauseAndStopSeeking)
-        sliders['seeker'].sliderReleased.connect(toStrictlyPlay)
-        sliders['seeker'].valueChanged.connect(goToMaybeSpecificTime)
+        seeker = NonScrollableSlider(QtCore.Qt.Horizontal, music)
+        seeker.setMinimum(0)
+        seeker.setMaximum(1000)
+        seeker.sliderPressed.connect(stopSeeking)
+        seeker.sliderReleased.connect(goToSpecificTime)
 
         labels['actualtime'] = QtWidgets.QLabel(music)
         labels['actualtime'].setText('-:--:--')
@@ -2244,20 +2905,42 @@ if __name__ == '__main__':
         labels['songname'].setText('No music playing')
         labels['songname'].setAlignment(QtCore.Qt.AlignLeft)
 
+        albumArt = QtWidgets.QLabel(music)
+        albumArt.resize(96, 96)
+        albumArt.setPixmap(QtGui.QPixmap(realpath+"/icon.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
 
-        lists['main'] = QtWidgets.QListWidget(music)
-        lists['main'].itemDoubleClicked.connect(goToSong)
 
+        mainList = TreeWidget(music)
+        
+        mainList.setColumnCount(5)
+        mainList.setHeaderLabels(["  Song Title", "  Duration", "  Location", "  Size", "  File Type"])
+        mainList.setColumnWidth(0, 400)
+        mainList.setColumnWidth(1, 80)
+        mainList.setColumnWidth(2, 300)
+        mainList.setColumnWidth(3, 100)
+        mainList.setColumnWidth(4, 80)
+        mainList.setFocusPolicy(QtCore.Qt.NoFocus)
+        mainList.setIconSize(QtCore.QSize(24, 24))
+        mainList.setSortingEnabled(True)
+        mainList.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
+        mainList.setVerticalScrollMode(QtWidgets.QTreeWidget.ScrollPerPixel)
+        mainList.setHorizontalScrollMode(QtWidgets.QTreeWidget.ScrollPerPixel)
+        mainList.itemDoubleClicked.connect(goToSong)
 
         menuBar = music.menuBar()
+        menuBar.setNativeMenuBar(False)
 
         
         icon = QtGui.QIcon("{0}/icon-sptmusic.png".format(realpath))
         tray = QtWidgets.QSystemTrayIcon()
         tray.setIcon(icon)
+        tray.setToolTip("SomePythonThings Music")
         tray.setVisible(True)
         trayMenu = QtWidgets.QMenu()
         tray.setContextMenu(trayMenu)
+        tray.messageClicked.connect(showMusic)
+        tray.activated.connect(showMusic)
+
 
         fileMenu = menuBar.addMenu("File")
         openAction = QtWidgets.QAction("Open     ", music)
@@ -2283,6 +2966,17 @@ if __name__ == '__main__':
 
 
         playbackMenu = menuBar.addMenu("Playback")
+        volumeMenu = playbackMenu.addMenu("Volume    ")
+        increaseAction = QtWidgets.QAction("Increase    ", music)
+        increaseAction.triggered.connect(increaseVolume)
+        volumeMenu.addAction(increaseAction)
+        decreaseAction = QtWidgets.QAction("Decrease    ", music)
+        decreaseAction.triggered.connect(decreaseVolume)
+        volumeMenu.addAction(decreaseAction)
+        muteAction = QtWidgets.QAction("Mute    ", music)
+        muteAction.triggered.connect(toMute)
+        muteAction.setCheckable(True)
+        volumeMenu.addAction(muteAction)
         playAction = QtWidgets.QAction("Play    ", music)
         playAction.triggered.connect(toStrictlyPlay)
         playbackMenu.addAction(playAction)
@@ -2305,6 +2999,17 @@ if __name__ == '__main__':
         playbackMenu.addAction(replayAction)
 
         playbackMenu = trayMenu.addMenu("Playback")
+        volumeMenu = playbackMenu.addMenu("Volume    ")
+        increaseAction = QtWidgets.QAction("Increase    ", music)
+        increaseAction.triggered.connect(increaseVolume)
+        volumeMenu.addAction(increaseAction)
+        decreaseAction = QtWidgets.QAction("Decrease    ", music)
+        decreaseAction.triggered.connect(decreaseVolume)
+        volumeMenu.addAction(decreaseAction)
+        muteActionTray = QtWidgets.QAction("Mute    ", music)
+        muteActionTray.triggered.connect(toMute)
+        muteActionTray.setCheckable(True)
+        volumeMenu.addAction(muteActionTray)
         playAction = QtWidgets.QAction("Play    ", music)
         playAction.triggered.connect(toStrictlyPlay)
         playbackMenu.addAction(playAction)
@@ -2317,28 +3022,32 @@ if __name__ == '__main__':
         previousSongAction = QtWidgets.QAction("Previous song    ", music)
         previousSongAction.triggered.connect(toGoBack)
         playbackMenu.addAction(previousSongAction)
-        shuffleAction = QtWidgets.QAction("Shuffle    ", music)
-        shuffleAction.triggered.connect(toShuffle)
-        shuffleAction.setCheckable(True)
-        playbackMenu.addAction(shuffleAction)
-        replayAction = QtWidgets.QAction("Replay    ", music)
-        replayAction.triggered.connect(toReplay)
-        replayAction.setCheckable(True)
-        playbackMenu.addAction(replayAction)
+        shuffleActionTray = QtWidgets.QAction("Shuffle    ", music)
+        shuffleActionTray.triggered.connect(toShuffle)
+        shuffleActionTray.setCheckable(True)
+        playbackMenu.addAction(shuffleActionTray)
+        replayActionTray = QtWidgets.QAction("Replay    ", music)
+        replayActionTray.triggered.connect(toReplay)
+        replayActionTray.setCheckable(True)
+        playbackMenu.addAction(replayActionTray)
 
 
         
         playlistMenu = menuBar.addMenu("Playlist")
         openFilesAction = QtWidgets.QAction("Add file(s) ", music)
+        openFilesAction.setShortcut("Ctrl+A")
         openFilesAction.triggered.connect(openFile)
         playlistMenu.addAction(openFilesAction)
         deleteTrackAction = QtWidgets.QAction("Remove selected track ", music)
+        deleteTrackAction.setShortcut("Ctrl+Del")
         deleteTrackAction.triggered.connect(removeFromPlaylist)
         playlistMenu.addAction(deleteTrackAction)
         savePlaylistAction = QtWidgets.QAction("Save playlist to file ", music)
+        savePlaylistAction.setShortcut("Ctrl+S")
         savePlaylistAction.triggered.connect(savePlaylist)
         playlistMenu.addAction(savePlaylistAction)
         openPlaylistAction = QtWidgets.QAction("Open playlist from file ", music)
+        openPlaylistAction.setShortcut("Ctrl+O")
         openPlaylistAction.triggered.connect(openPlaylist)
         playlistMenu.addAction(openPlaylistAction)
 
@@ -2357,45 +3066,56 @@ if __name__ == '__main__':
         playlistMenu.addAction(openPlaylistAction)
 
 
+        libraryMenu = menuBar.addMenu("Library")
+        openOnExplorerAction = QtWidgets.QAction("Show on explorer ", music)
+        openOnExplorerAction.triggered.connect(openLibrary)
+        libraryMenu.addAction(openOnExplorerAction)
+        loadTrackAction = QtWidgets.QAction("Load library... ", music)
+        loadTrackAction.setShortcut("Ctrl+l")
+        loadTrackAction.triggered.connect(load_library)
+        libraryMenu.addAction(loadTrackAction)
+
+        libraryMenu = trayMenu.addMenu("Library")
+        openOnExplorerAction = QtWidgets.QAction("Show on explorer ", music)
+        openOnExplorerAction.triggered.connect(openLibrary)
+        libraryMenu.addAction(openOnExplorerAction)
+        loadTrackAction = QtWidgets.QAction("Load library... ", music)
+        loadTrackAction.triggered.connect(load_library)
+        libraryMenu.addAction(loadTrackAction)
+
 
         settingsMenu = menuBar.addMenu("Settings")
-        installDependenciesAction = QtWidgets.QAction(" Re-install ffmpeg   ", music)
-        installDependenciesAction.triggered.connect(partial(checkForDependencies, True))
-        settingsMenu.addAction(installDependenciesAction)
+        logAction = QtWidgets.QAction(" Open Log", music)
+        logAction.triggered.connect(openLog)
+        settingsMenu.addAction(logAction)
         openSettingsAction = QtWidgets.QAction(" Settings...    ", music)
         openSettingsAction.triggered.connect(openSettingsWindow)
         settingsMenu.addAction(openSettingsAction)
-        if(_platform=='darwin'):
-            openSettingsAction = QtWidgets.QAction("Settings...    ", music)
-            openSettingsAction.triggered.connect(openSettingsWindow)
-            settingsMenu.addAction(openSettingsAction)
-
-
 
         helpMenu = menuBar.addMenu("Help")
         openHelpAction = QtWidgets.QAction("Online manual", music)
         openHelpAction.triggered.connect(openHelp)
         helpMenu.addAction(openHelpAction)
-        aboutAction = QtWidgets.QAction("About SomePythonThings Music    ", music)
-        aboutAction.triggered.connect(about)
-        helpMenu.addAction(aboutAction)
         updatesAction = QtWidgets.QAction("Check for updates", music)
         updatesAction.triggered.connect(checkDirectUpdates)
         helpMenu.addAction(updatesAction)
+        aboutAction = QtWidgets.QAction("About SomePythonThings Music    ", music)
+        aboutAction.triggered.connect(about)
+        helpMenu.addAction(aboutAction)
 
         helpMenu = trayMenu.addMenu("Help")
         openHelpAction = QtWidgets.QAction("Online manual", music)
         openHelpAction.triggered.connect(openHelp)
         helpMenu.addAction(openHelpAction)
-        aboutAction = QtWidgets.QAction("About SomePythonThings Music    ", music)
-        aboutAction.triggered.connect(about)
-        helpMenu.addAction(aboutAction)
         updatesAction = QtWidgets.QAction("Check for updates", music)
         updatesAction.triggered.connect(checkDirectUpdates)
         helpMenu.addAction(updatesAction)
+        aboutAction = QtWidgets.QAction("About SomePythonThings Music    ", music)
+        aboutAction.triggered.connect(about)
+        helpMenu.addAction(aboutAction)
         
         showMusicAction = QtWidgets.QAction("Show SomePythonThigs Music ", music)
-        showMusicAction.triggered.connect(music.show)
+        showMusicAction.triggered.connect(showMusic)
         trayMenu.addAction(showMusicAction)
 
         quitMusicAction = QtWidgets.QAction("Quit SomePythonThigs Music ", music)
@@ -2407,19 +3127,34 @@ if __name__ == '__main__':
                 canRun=True
         while(not(goRun)): pass
         if(canRun):
-            music.show()
+            showMusic()
             if(_platform == "win32"):
-                from PyQt5 import QtWinExtras
+                from PySide2 import QtWinExtras
                 loadbutton = QtWinExtras.QWinTaskbarButton(music)
                 loadbutton.setWindow(music.windowHandle())
                 taskbprogress = loadbutton.progress()
                 taskbprogress.setRange(0, 100)
                 taskbprogress.setValue(0)
                 taskbprogress.show()
+
+                buttonsBar = QtWinExtras.QWinThumbnailToolBar(music)
+                buttonsBar.setWindow(music.windowHandle())
+                WindowPreviousButton = QtWinExtras.QWinThumbnailToolButton(music)
+                WindowPreviousButton.clicked.connect(toGoBack)
+                WindowPreviousButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/first-track-bar.ico"))
+                buttonsBar.addButton(WindowPreviousButton)
+                WindowPlayButton = QtWinExtras.QWinThumbnailToolButton(music)
+                WindowPlayButton.clicked.connect(toPlay)
+                WindowPlayButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/play-bar.ico"))
+                buttonsBar.addButton(WindowPlayButton)
+                WindowNextButton = QtWinExtras.QWinThumbnailToolButton(music)
+                WindowNextButton.clicked.connect(toSkip)
+                WindowNextButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/last-track-bar.ico"))
+                buttonsBar.addButton(WindowNextButton)
+
             resizeWidgets()
-            upadtesThread = Thread(target=updates_thread)
-            upadtesThread.daemon = True
-            upadtesThread.start()
+            Thread(target=updates_thread, daemon=True).start()
+            Thread(target=checkModeThread, daemon=True).start()
             log("[        ] Program loaded, starting UI...")
             i = 1
             isThereAFile = False
@@ -2441,35 +3176,46 @@ if __name__ == '__main__':
                         i += 1
             if(isThereAFile):
                 toStrictlyPlay()
-            dependenciesThread = Thread(target=checkForDependencies)
-            dependenciesThread.daemon = True
-            dependenciesThread.start()
             app.exec_()
         else:
             tray.setVisible(False)
             log('[  EXIT  ] Exiting...')
             try:        
-                killFfplay()
+                killPlayProcess()
             except AttributeError:
                 pass
             sys.exit()
-    except KeyboardInterrupt:
-        pass
     except Exception as e:
-        if not debugging:
-            throw_error("Fatal Error!", "SomePythonThings Music crashed by a fatal error. If it's the first time you see that, just reopen the program. If it's not the first time, please mail me at somepythonthingschannel@gmail.com and send me the details of the error (This would be very helpful ;D )\n\nException details: \nException Type: {0}\n\nException Arguments:\n{1!r}".format(type(e).__name__, e.args)+"\n\nException Comments:\n"+str(e))
-            try:        
-                killFfplay()
-            except AttributeError:
-                pass
-        else:
-            try:        
-                killFfplay()
-            except AttributeError:
-                pass
+        try:        
+            killPlayProcess()
+        except AttributeError:
+            pass
+        log("[ FAILED ] A FATAL ERROR OCCURRED. PROGRAM WILL BE TERMINATED AFTER ERROR REPORT")
+        try:
+            throw_error('SomePythonThings Music', "SomePythonThings Music crashed because of a fatal error.\n\nAn Error Report will be generated and opened automatically\n\nSending the report would be very appreciated. Sorry for any inconveniences")
+        except:
+            pass
+        os_info = f"" + \
+        f"                        OS: {platform.system()}\n"+\
+        f"                   Release: {platform.release()}\n"+\
+        f"           OS Architecture: {platform.machine()}\n"+\
+        f"          APP Architecture: {platform.architecture()[0]}\n"+\
+        f"                   Program: SomePythonThings Music Version {actualVersion}"+\
+        "\n\n-----------------------------------------------------------------------------------------"
+        traceback_info = "Traceback (most recent call last):\n"
+        try:
+            for line in traceback.extract_tb(e.__traceback__).format():
+                traceback_info += line
+            traceback_info += f"\n{type(e).__name__}: {str(e)}"
+        except:
+            traceback_info += "\nUnable to get traceback"
+            if(debugging):
+                raise e
+        webbrowser.open("https://www.somepythonthings.tk/error-report/?appName=SomePythonThings Music&errorBody="+os_info.replace('\n', '{newline}').replace(' ', '{space}')+"{newline}{newline}{newline}{newline}SomePythonThings Music Log:{newline}"+str(logHistory+"\n\n\n\n"+traceback_info).replace('\n', '{newline}').replace(' ', '{space}'))
+        if(debugging):
             raise e
     try:        
-        killFfplay()
+        killPlayProcess()
     except AttributeError:
         pass
-    log('[  EXIT  ] Reached end of the script')
+log('[  EXIT  ] Reached end of the script')

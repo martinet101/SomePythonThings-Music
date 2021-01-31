@@ -4,7 +4,7 @@ block_cipher = None
 
 
 a = Analysis(['SomePythonThings Music.py'],
-             pathex=['/home/marticlilop/Escriptori/SPTPrograms/_Music with PyQt5'],
+             pathex=['/home/marticlilop/Escriptori/SPTPrograms/_Music with PySide2'],
              binaries=[],
              datas=[('resources-sptmusic', 'resources-sptmusic')],
              hiddenimports=['pkg_resources.py2_warn'],
