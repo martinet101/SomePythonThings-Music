@@ -1,6 +1,7 @@
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ------------------------------------------------------------------------------- Required Modules ------------------------------------------------------------------------------ #
 import os
+import re
 import sys
 import time
 import glob
@@ -15,6 +16,7 @@ import traceback
 import subprocess
 import webbrowser
 import darkdetect
+import pynput.keyboard
 from sys import platform as _platform
 from ast import literal_eval
 from pytube import YouTube
@@ -30,7 +32,7 @@ from youtubesearchpython import VideosSearch
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ------------------------------------------------------------------------------------ Globals ---------------------------------------------------------------------------------- #
 debugging = False
-actualVersion = 2.0
+actualVersion = 2.1
 
 music_files = ('Common Media Files (*.wav; *.mp3; *.pcm; *.aiff; *.aac; *.ogg; *.wma; *.flac);;Other media files (*.*)')
 music_extensions = ['*.wav', '*.mp3', '*.pcm', '*.aiff', '*.aac', '*.ogg', '*.wma', '*.flac']
@@ -45,6 +47,7 @@ canRun=True
 seeking = True
 
 justContinue = False
+bannerIsBeingShowed = False
 playerIsRunning = False
 logBlocked = False
 seekerValueManuallyChanged = False
@@ -75,6 +78,7 @@ trackNumber = 0
 background_picture_path = ''
 logHistory = ""
 font = ""
+fileBeingPlayed = ""
 realpath = "."
 
 defaultSettings = {
@@ -83,6 +87,10 @@ defaultSettings = {
     "volume": 100,
     "showTrackNotification": True,
     "showEndNotification": True,
+    "loadLibraryAtStartup": True,
+    "repeatByDefault": False,
+    "shuffleByDefault": False,
+    "alertOfKeyboardControl": True,
     "bakcgroundPicture":"None",
     "mode":'auto',
 }
@@ -334,7 +342,7 @@ lightModeStyleSheet = """
         padding: 2px;
         height: 20px;
         margin-bottom: 5px;
-        border: 1px solid black;
+        border: 1px solid white;
         border-top:0px;
         border-left:1px;
         border-bottom:0x;
@@ -867,8 +875,13 @@ def getTheme():
     else:
         return 1
 
-def getWindowStyleSheet():
+def getWindowStyleSheet(banner=False):
     global settings, realpath, background_picture_path
+    if(banner):
+        log("[  WARN  ] Returning banner stylesheet!")
+        local_background_picture_path = background_picture_path.replace("background-sptmusic", "half-background-sptmusic")
+    else:
+        local_background_picture_path = background_picture_path
     mode = 'auto'
     try:
         if(os.path.exists(settings['background'])):
@@ -877,7 +890,7 @@ def getWindowStyleSheet():
             log("[  WARN  ] Custom background picture does not exist")
     except KeyError:
         log("[  WARN  ] Can't get custom background picture")
-    log("[   OK   ] Background picture path set to "+str(background_picture_path))
+    log("[   OK   ] Background picture path set to "+str(local_background_picture_path))
     try:
         if(str(settings["mode"]).lower() in 'darklightauto'):
             mode = str(settings['mode'])
@@ -897,9 +910,9 @@ def getWindowStyleSheet():
             mode='light'
     log('[   OK   ] mode set to '+str(mode))
     if(mode=='light'):
-        return lightModeStyleSheet.format(font, background_picture_path)
+        return lightModeStyleSheet.format(font, local_background_picture_path)
     else:
-        return darkModeStyleSheet.format(font, background_picture_path)
+        return darkModeStyleSheet.format(font, local_background_picture_path)
 
 def checkModeThread():
     lastMode = getTheme()
@@ -942,13 +955,15 @@ def notify(title, body, icon=QtGui.QIcon(realpath+"/icon.ico")):
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ------------------------------------------------------------------------------ Update Functions ------------------------------------------------------------------------------- #
-if(True):
-    def checkUpdates_py():
+if(True): # This conditional is only to be able to collapse the full updates block in VS Code
+    def checkUpdates_py(force=False):
         global music, actualVersion
         try:
             response = urlopen("http://www.somepythonthings.tk/versions/music.ver")
             response = response.read().decode("utf8")
             if float(response.split("///")[0]) > actualVersion:
+                get_updater().call_in_main(askUpdates, response)
+            elif(force):
                 get_updater().call_in_main(askUpdates, response)
             else:
                 log("[   OK   ] No updates found")
@@ -1137,7 +1152,7 @@ def youtubeWindow():
                 newItem.setText(0, "{0:0>4}".format(str(i)))
                 newItem.setText(1, video['title'])
                 newItem.setToolTip(1, "Double-click to download")
-                newItem.setIcon(1, QtGui.QIcon(realpath.replace("\\", "/")+"/icons-sptmusic/download.ico"))
+                newItem.setIcon(1, QtGui.QIcon(QtGui.QIcon(realpath.replace("\\", "/")+"/icons-sptmusic/download.ico").pixmap(256, 256).scaledToHeight(24, QtCore.Qt.SmoothTransformation)))
                 newItem.setText(3, video['duration'])
                 newItem.setText(4, video['channel']['name'])
                 newItem.setText(6, "https://www.youtube.com/watch?v="+video['id'])
@@ -1285,11 +1300,12 @@ def youtubeWindow():
     youtube.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, False)
     youtube.setWindowModality(QtCore.Qt.ApplicationModal)
     youtube.resized.connect(resizeWidgets)
-    youtube.setAutoFillBackground(True)
-    youtube.setWindowModality(QtCore.Qt.WindowModal)
-    youtube.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    youtube.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
-    youtube.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+    if(_platform == 'darwin'):
+        youtube.setAutoFillBackground(True)
+        youtube.setWindowModality(QtCore.Qt.WindowModal)
+        youtube.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        youtube.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        youtube.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
 
     query = QtWidgets.QLineEdit(youtube)
     query.setPlaceholderText("Imagine Dragons - Believer")
@@ -1330,12 +1346,103 @@ def youtubeWindow():
     query.setFocus()
     youtube.show()
 
+def showMediaWindow(skip=False):
+    global bannerIsBeingShowed
+
+    def timerToClose():
+        global bannerIsBeingShowed
+        for _ in range(10):
+            time.sleep(0.3)
+            try:
+                get_updater().call_in_main(art.setPixmap, albumArt.pixmap())
+                get_updater().call_in_main(title.setText, labels['songname'].text())
+                try:
+                    get_updater().call_in_main(backgroundBar.setValue, int(playProcess.position()/playProcess.duration()*1000))
+                    get_updater().call_in_main(slider.setValue, int(playProcess.position()/playProcess.duration()*1000))
+                except ZeroDivisionError:
+                    get_updater().call_in_main(backgroundBar.setValue, 0)
+                    get_updater().call_in_main(slider.setValue, 0)
+                get_updater().call_in_main(backgroundBar.repaint)
+                get_updater().call_in_main(slider.repaint)
+            except: # Raised when 2 insatnces of the banner are running
+                pass
+        for i in range(30, 0, -1):
+            get_updater().call_in_main(banner.setWindowOpacity, i/30)
+            get_updater().call_in_main(art.setPixmap, albumArt.pixmap())
+            get_updater().call_in_main(title.setText, labels['songname'].text())
+            try:
+                get_updater().call_in_main(backgroundBar.setValue, int(playProcess.position()/playProcess.duration()*1000))
+                get_updater().call_in_main(slider.setValue, int(playProcess.position()/playProcess.duration()*1000))
+            except ZeroDivisionError:
+                get_updater().call_in_main(backgroundBar.setValue, 0)
+                get_updater().call_in_main(slider.setValue, 0)
+            get_updater().call_in_main(backgroundBar.repaint)
+            get_updater().call_in_main(slider.repaint)
+            time.sleep(0.02)
+        get_updater().call_in_main(banner.hide)
+        get_updater().call_in_main(banner.close)
+        time.sleep(0.05)
+        bannerIsBeingShowed = False
+
+
+    if(not(bannerIsBeingShowed)):
+        bannerIsBeingShowed = True
+        log("[   OK   ] Showing media window...")
+        banner = ClosableWindow()
+        banner.setStyleSheet(getWindowStyleSheet(banner=True))
+        banner.setGeometry(40, 40, 500, 120)
+        banner.setFocusPolicy(QtCore.Qt.NoFocus)
+        banner.setWindowFlags(QtCore.Qt.WindowFlags(QtCore.Qt.FramelessWindowHint | QtCore.Qt.ToolTip | QtCore.Qt.WindowStaysOnTopHint))
+        
+        if(skip):
+            log("[  INFO  ] Coming from skip or go back...")
+            while(skipped or goBack):
+                time.sleep(0.1)
+            
+
+        backgroundBar = QtWidgets.QProgressBar(banner)
+        backgroundBar.setTextVisible(False)
+        backgroundBar.setMinimum(0)
+        backgroundBar.setMaximum(1000)
+        try:
+            backgroundBar.setValue(int(playProcess.position()/playProcess.duration()*1000))
+        except ZeroDivisionError:
+            backgroundBar.setValue(0)
+        backgroundBar.move(0, 0)
+        backgroundBar.resize(500, 150)
+
+        art = QtWidgets.QLabel(banner)
+        art.resize(96, 96)
+        art.move(12, 12)
+        art.setPixmap(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(fileBeingPlayed)).pixmap(256, 256).scaledToHeight(96, QtCore.Qt.SmoothTransformation))
+        
+        slider = NonScrollableSlider(QtCore.Qt.Horizontal, banner)
+        slider.setRange(0, 1000)
+        try:
+            slider.setValue(int(playProcess.position()/playProcess.duration()*1000))
+        except ZeroDivisionError:
+            slider.setValue(0)
+        slider.setEnabled(False)
+        slider.resize(360, 20)
+        slider.move(120, 80)
+        
+        title = QtWidgets.QLabel(banner)
+        title.setText(labels['songname'].text())
+        title.move(120, 20)
+        title.resize(360, 20)
+        
+        banner.show()
+        Thread(target=timerToClose, daemon=True).start()
+    else:
+        log("[  WARN  ] Banner already there!")
+
+
 def toStyleMainList():
     global playing, lists, trackNumber, music, font, t
     try:
         for item in range(0, mainList.topLevelItemCount()):
             mainList.topLevelItem(item).setFont(0, QtGui.QFont(font, weight=QtGui.QFont.Normal))
-            mainList.topLevelItem(item).setIcon(0, QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(mainList.topLevelItem(item).text(2))))
+            mainList.topLevelItem(item).setIcon(0, QtGui.QIcon(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(mainList.topLevelItem(item).text(2))).pixmap(256, 256).scaledToHeight(24, QtCore.Qt.SmoothTransformation)))
         if(playing):
             mainList.topLevelItem(trackNumber).setFont(0, QtGui.QFont(font, weight=QtGui.QFont.Bold))
             mainList.topLevelItem(trackNumber).setIcon(0, QtGui.QIcon(str(realpath)+"/icons-sptmusic/playing.ico"))
@@ -1349,10 +1456,17 @@ def toStyleMainList():
         t = KillableThread(target=startPlayback)
         t.daemon = True
         t.start()
+    except Exception as e:
+        if(debugging):
+            raise e
 
 def killPlayProcess():
     global playProcess
-    playProcess.stop()
+    try:
+        playProcess.stop()
+    except Exception as e:
+        if(debugging):
+            raise e
 
 def removeFromPlaylist():
     global lists, trackNumber, justContinue, passedTime
@@ -1371,6 +1485,30 @@ def removeFromPlaylist():
                     raise e
         else:
             log('[  WARN  ] No song selected to detete!')
+
+def removeFromComputer():
+    global lists, trackNumber, justContinue, passedTime
+    for itemToRemove in mainList.selectedItems():
+        if(itemToRemove != None):
+            if QtWidgets.QMessageBox.Yes == QtWidgets.QMessageBox.question(music, 'Delete file - SomePythonThings Music', f"Do you really want to delete \"{itemToRemove.text(2)}\" from YOUR COMPUTER? Please note that this action CANNOT be reverted.", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No):
+                try:
+                    trackToRemove = mainList.indexOfTopLevelItem(itemToRemove)
+                    log(f"[  WARN  ] Removing file {itemToRemove.text(2)} from computer...")
+                    os.remove(itemToRemove.text(2))
+                    log('[        ] Index of files list is {0}, deleting song in position {0}'.format(trackToRemove))
+                    item = mainList.takeTopLevelItem(trackToRemove)
+                    del item
+                    passedTime = 0.0
+                    log("[   OK   ] File removed!")
+                except Exception as e:
+                    throw_error("Unable to remove track!", "Unable to remove the track from the playlist.\n\nError Details: \n"+str(e))
+                    if(debugging):
+                        raise e
+            else:
+                log("[  WARN  ] User aborted deletion")
+        else:
+            log('[  WARN  ] No song selected to detete!')
+
 
 def playFile(file, passedTime=0):
     global playProcess, volume, blockPlay
@@ -1554,7 +1692,7 @@ def openFile():
                     pass
             newItem =  QtWidgets.QTreeWidgetItem()
             newItem
-            newItem.setIcon(0, QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(filename)))
+            newItem.setIcon(0, QtGui.QIcon(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(filename).pixmap(256, 256)).scaledToHeight(24, QtCore.Qt.SmoothTransformation)))
             newItem.setText(0, getSongTitle(filename))
             newItem.setText(1, str(datetime.timedelta(seconds=int(getLenght(filename)))))
             newItem.setText(2, filename.replace("\\", "/"))
@@ -1576,7 +1714,7 @@ def addFile(filepath):
         try:
             log('[   OK   ] File "'+str(filename)+'" processed')
             newItem =  QtWidgets.QTreeWidgetItem()
-            newItem.setIcon(0, QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(filename)))
+            newItem.setIcon(0, QtGui.QIcon(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(filename)).pixmap(256, 256).scaledToHeight(24, QtCore.Qt.SmoothTransformation)))
             newItem.setText(0, getSongTitle(filename))
             newItem.setText(1, str(datetime.timedelta(seconds=int(getLenght(filename)))))
             newItem.setText(2, filename.replace("\\", "/"))
@@ -1615,7 +1753,7 @@ def toStrictlyPause():
         except AttributeError:
             pass
 
-def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', mode='auto', volume=100, showTrackNotification=True, showEndNotification=True):
+def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', mode='auto', volume=100, showTrackNotification=True, showEndNotification=True,loadLibraryAtStartup=True, repeatByDefault=False, shuffleByDefault=False):
     global defaultSettings
     try:
         os.chdir(os.path.expanduser('~'))
@@ -1639,6 +1777,10 @@ def saveSettings(silent=True, minimize_to_tray=False, bakcgroundPicture='None', 
                 "volume": volume,
                 "showTrackNotification": showTrackNotification,
                 "showEndNotification": showEndNotification,
+                "loadLibraryAtStartup": loadLibraryAtStartup,
+                "alertOfKeyboardControl": settings['alertOfKeyboardControl'],
+                "repeatByDefault": repeatByDefault,
+                "shuffleByDefault": shuffleByDefault,
                 "bakcgroundPicture": bakcgroundPicture,
                 "mode":mode,
                 }))
@@ -1691,17 +1833,18 @@ def openSettings():
 def openSettingsWindow():
     global music, settings, settingsWindow
     settingsWindow = Window(music)
-    settingsWindow.setMinimumSize(500, 300)
-    settingsWindow.setMaximumSize(500, 300)
+    settingsWindow.setMinimumSize(500, 420)
+    settingsWindow.setMaximumSize(500, 420)
     settingsWindow.setWindowTitle("SomePythonThings Music Settings")
     settingsWindow.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
     settingsWindow.setWindowFlag(QtCore.Qt.WindowMinimizeButtonHint, False)
     settingsWindow.setWindowModality(QtCore.Qt.ApplicationModal)
-    settingsWindow.setAutoFillBackground(True)
-    settingsWindow.setWindowModality(QtCore.Qt.WindowModal)
-    settingsWindow.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    settingsWindow.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
-    settingsWindow.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+    if(_platform == 'darwin'):
+        settingsWindow.setAutoFillBackground(True)
+        settingsWindow.setWindowModality(QtCore.Qt.WindowModal)
+        settingsWindow.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        settingsWindow.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        settingsWindow.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
 
     modeSelector = QtWidgets.QComboBox(settingsWindow)
     modeSelector.insertItem(0, 'Light')
@@ -1752,12 +1895,30 @@ def openSettingsWindow():
     endNotifier.setObjectName('settingsCheckbox')
     endNotifier.setText("Show a notification when the playlist finishes")
 
+    libraryLoader = QtWidgets.QCheckBox(settingsWindow)
+    libraryLoader.resize(460, 30)
+    libraryLoader.move(20, 220)
+    libraryLoader.setObjectName('settingsCheckbox')
+    libraryLoader.setText("Load library when the program starts")
+
+    shuffleByDefault = QtWidgets.QCheckBox(settingsWindow)
+    shuffleByDefault.resize(460, 30)
+    shuffleByDefault.move(20, 260)
+    shuffleByDefault.setObjectName('settingsCheckbox')
+    shuffleByDefault.setText("Enable shuffle by default")
+
+    repeatByDefault = QtWidgets.QCheckBox(settingsWindow)
+    repeatByDefault.resize(460, 30)
+    repeatByDefault.move(20, 300)
+    repeatByDefault.setObjectName('settingsCheckbox')
+    repeatByDefault.setText("Enable replay by default")
+
     saveButton = QtWidgets.QPushButton(settingsWindow)
     saveButton.setText("Save settings and close")
     saveButton.resize(460, 40)
-    saveButton.move(20, 240)
+    saveButton.move(20, 360)
     saveButton.setObjectName('squarePurpleButton')
-    saveButton.clicked.connect(partial(saveAndCloseSettings, modeSelector, traySelector, volumeSpinner, settingsWindow, trackNotifier, endNotifier))
+    saveButton.clicked.connect(partial(saveAndCloseSettings, modeSelector, traySelector, volumeSpinner, settingsWindow, trackNotifier, endNotifier, libraryLoader, shuffleByDefault, repeatByDefault))
 
     try:
         if(settings['mode'].lower() == 'light'):
@@ -1800,10 +1961,26 @@ def openSettingsWindow():
     except KeyError:
         log("[  WARN  ] Could not detect end notification value!")
 
+    try:
+        libraryLoader.setChecked(settings["loadLibraryAtStartup"])
+    except KeyError:
+        log("[  WARN  ] Could not detect end notification value!")
+
+    try:
+        shuffleByDefault.setChecked(settings["shuffleByDefault"])
+    except KeyError:
+        log("[  WARN  ] Could not detect shuffle by default!")
+
+    try:
+        repeatByDefault.setChecked(settings["repeatByDefault"])
+    except KeyError:
+        log("[  WARN  ] Could not detect repeat by default!")
+
 
     settingsWindow.show()
 
-def saveAndCloseSettings(modeSelector: QtWidgets.QComboBox, traySelector: QtWidgets.QComboBox, volumeSpinner: QtWidgets.QSpinBox, settingsWindow, trackNotifier: QtWidgets.QCheckBox, endNotifier: QtWidgets.QCheckBox):
+def saveAndCloseSettings(modeSelector: QtWidgets.QComboBox, traySelector: QtWidgets.QComboBox, volumeSpinner: QtWidgets.QSpinBox, settingsWindow, trackNotifier: QtWidgets.QCheckBox, endNotifier: QtWidgets.QCheckBox,
+        libraryLoader: QtWidgets.QCheckBox, shuffleByDefault: QtWidgets.QCheckBox, repeatByDefault: QtWidgets.QCheckBox):
     global settings, forceClose
     if(traySelector.currentIndex() == 1):
         settings['minimize_to_tray'] = True
@@ -1818,10 +1995,13 @@ def saveAndCloseSettings(modeSelector: QtWidgets.QComboBox, traySelector: QtWidg
     settings["volume"] = volumeSpinner.value()
     settings["showTrackNotification"] = trackNotifier.isChecked()
     settings["showEndNotification"] = endNotifier.isChecked()
+    settings["loadLibraryAtStartup"] = libraryLoader.isChecked()
+    settings["repeatByDefault"] = repeatByDefault.isChecked()
+    settings["shuffleByDefault"] = shuffleByDefault.isChecked()
     forceClose = True
     settingsWindow.close()
     music.setStyleSheet(getWindowStyleSheet())
-    saveSettings(silent=False, minimize_to_tray=settings['minimize_to_tray'], bakcgroundPicture=settings['bakcgroundPicture'], mode=settings['mode'], volume=settings['volume'], showTrackNotification=settings['showTrackNotification'], showEndNotification=settings['showEndNotification'])
+    saveSettings(silent=False, minimize_to_tray=settings['minimize_to_tray'], bakcgroundPicture=settings['bakcgroundPicture'], mode=settings['mode'], volume=settings['volume'], showTrackNotification=settings['showTrackNotification'], showEndNotification=settings['showEndNotification'],loadLibraryAtStartup=settings["loadLibraryAtStartup"], repeatByDefault=settings["repeatByDefault"], shuffleByDefault=settings["shuffleByDefault"])
 
 def getLenght(file):
     global debugging
@@ -1874,10 +2054,27 @@ def getFileType(file): #from file.mp3, returns MP3, from file.FiLeExT, returns F
     return file.split('.')[-1].upper()
     
 def getSongTitle(file):
-    return str(file.replace('\\', '/').split('/')[-1]).replace("."+file.split('.')[-1], '')
+    name = str(file.replace('\\', '/').split('/')[-1]).replace("."+file.split('.')[-1], '')
+    try:
+        for item in ['lyrics', 'official', 'videoclip', 'letra', 'lletra', 'audiolyric', "videolyric", "oficial", "video", "audio", "HD", "4k", "()", "[]", "{}", "( )", "[ ]", "{ }", "(  )", "[  ]", "{  }", "(   )", "[   ]", "{   }", "(    )", "[    ]", "{    }"]:
+            toReplace = re.compile(re.escape(item), re.IGNORECASE)
+            name = toReplace.sub('', name)
+        toReplace = re.compile(re.escape("by"), re.IGNORECASE)
+        name = toReplace.sub('-', name)
+        for _ in range(5):
+            name.replace('  ', ' ')
+        name = name.split(' ')
+        for i in range(len(name)):
+            name[i] = name[i].capitalize()
+        name = ' '.join(name)
+        log("[   OK   ] Song name beautified")
+    except Exception as e:
+        if(debugging):
+            raise e
+    return name.replace("U0026", "&")
 
 def startPlayback(track=0):
-    global labels, skipped, playerIsRunning, playProcess, goBack, playing, trackNumber, replay, blockPlay, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, song_length
+    global labels, skipped, playerIsRunning, fileBeingPlayed, playProcess, goBack, playing, trackNumber, replay, blockPlay, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, song_length
     playerIsRunning = True
     stopped=False
     skipped=False
@@ -1910,7 +2107,7 @@ def startPlayback(track=0):
                 log('[        ] Start time is {0} ms'.format(passedTime*1000))
                 song_length = getLenght(track)
                 filename = getSongTitle(track)
-
+                fileBeingPlayed = track
                 get_updater().call_in_main(labels['totaltime'].setText, str(datetime.timedelta(seconds=int(song_length))))
                 get_updater().call_latest(labels['songname'].setText, filename)
 
@@ -1925,7 +2122,7 @@ def startPlayback(track=0):
                         get_updater().call_in_main(notify, "SomePythonThings Music", getSongTitle(track))
                         time.sleep(0.5)
                 albumArt.setPixmap(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(track)).pixmap(256, 256).scaledToHeight(96, QtCore.Qt.SmoothTransformation))
-
+                
                 log("[        ] Calling play thread...")
                 blockPlay = True
                 get_updater().call_in_main(playFile, track, passedTime=passedTime)
@@ -1943,8 +2140,6 @@ def startPlayback(track=0):
                 msPlayed = 0
                 lenght = getLenght(track)*1000
                 percentagePlayed = 0
-                oldPos = -500
-                repatedPositions = -4
 
                 while(True):
                     msPlayed = playProcess.position()
@@ -1963,7 +2158,7 @@ def startPlayback(track=0):
                         get_updater().call_in_main(toStyleMainList)
                         log('[   OK   ] Paused at moment {}'.format((time.time()-starttime)))
                         while not(playing):
-                            pass
+                            time.sleep(0.01)# if "pass" statement here, cpu will run at full speed (qua core systems at 25%, dual core at 50%, etc.) until play button was hitted.
                         albumArt.setPixmap(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(track)).pixmap(256, 256).scaledToHeight(96, QtCore.Qt.SmoothTransformation))
                         log('[        ] Continuing playback...')
                         playProcess.play()
@@ -1984,19 +2179,13 @@ def startPlayback(track=0):
                         log('[        ] Passing away...')
                         break
 
-                    if(oldPos==msPlayed):
-                        repatedPositions += 1
-                    else:
-                        repatedPositions = 0
-
-                    if(lenght<=msPlayed or (repatedPositions>4 and msPlayed!=0)):
+                    if(playProcess.state() == QtMultimedia.QMediaPlayer.StoppedState):
                         log('[  KILL  ] Killing play bucle, arrived to end...')
                         break
 
                     toWait = 0.05 - (time.time()-loopStartTime)
                     if(toWait>0):
                         time.sleep(toWait)
-                    oldPos = msPlayed
 
                 if(skipped):
                     log('[   OK   ] Skipped')
@@ -2174,8 +2363,6 @@ def showMusic(reason=QtWidgets.QSystemTrayIcon.Unknown):
 
 def openPlaylist(playlist=''):
     global music, elementNumber
-    toStrictlyPause()
-    removeAllItems()
     log('[        ] Playlist attribute value is {0}'.format(playlist))
     playAfter = False
     try:
@@ -2197,7 +2384,10 @@ def openPlaylist(playlist=''):
         file.close()
         try:
             if(len(content.split("###"))<2):
-                raise NotImplementedError('This platlist file is not a valid .sptplaylist file!')
+                raise FileExistsError('This platlist file is not a valid .sptplaylist file!')
+            else:
+                toStrictlyPause()
+                removeAllItems()
             for songFile in content.split("###")[1].split('\n'):
                 if(songFile!=''):
                     addFile(songFile)
@@ -2260,13 +2450,14 @@ def throw_info(title, body, icon="ok.png", exit=False):
     else:
         msg.setIcon(QtWidgets.QMessageBox.Information)
     msg.setText(body)
-    msg.setAutoFillBackground(True)
-    msg.setWindowModality(QtCore.Qt.WindowModal)
-    msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
-    msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
-    msg.setModal(True)
-    msg.setSizeGripEnabled(False)
+    if(_platform == 'darwin'):
+        msg.setAutoFillBackground(True)
+        msg.setWindowModality(QtCore.Qt.WindowModal)
+        msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+        msg.setModal(True)
+        msg.setSizeGripEnabled(False)
     msg.setWindowTitle(title)
     msg.exec_()
     if(exit):
@@ -2287,13 +2478,15 @@ def throw_warning(title, body, warning=None):
         msg.setIconPixmap(QtGui.QPixmap(str(realpath)+"/icons-sptmusic/warn.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
     else:
         msg.setIcon(QtWidgets.QMessageBox.Warning)
-    msg.setAutoFillBackground(True)
-    msg.setWindowModality(QtCore.Qt.WindowModal)
-    msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
-    msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
-    msg.setModal(True)
-    msg.setSizeGripEnabled(False)
+    
+    if(_platform == 'darwin'):
+        msg.setAutoFillBackground(True)
+        msg.setWindowModality(QtCore.Qt.WindowModal)
+        msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+        msg.setModal(True)
+        msg.setSizeGripEnabled(False)
     msg.setText(body)
     msg.setWindowTitle(title)
     msg.exec_()
@@ -2307,13 +2500,15 @@ def throw_error(title, body, error="Not Specified"):
         msg.setIconPixmap(QtGui.QPixmap(str(realpath)+"/icons-sptmusic/error.png").scaledToHeight(96, QtCore.Qt.SmoothTransformation))
     else:
         msg.setIcon(QtWidgets.QMessageBox.Critical)
-    msg.setAutoFillBackground(True)
-    msg.setWindowModality(QtCore.Qt.WindowModal)
-    msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-    msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
-    msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
-    msg.setModal(True)
-    msg.setSizeGripEnabled(False)
+    
+    if(_platform == 'darwin'):
+        msg.setAutoFillBackground(True)
+        msg.setWindowModality(QtCore.Qt.WindowModal)
+        msg.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        msg.setWindowFlag(QtCore.Qt.WindowContextHelpButtonHint, False)
+        msg.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+        msg.setModal(True)
+        msg.setSizeGripEnabled(False)
     msg.setText(body)
     msg.setWindowTitle(title)
     msg.exec_()
@@ -2324,7 +2519,8 @@ def updates_thread():
  
 def quitMusic():
     log("[  INFO  ] Quitting application...")
-    global music
+    global music, forceClose
+    forceClose = True
     music.close()
     try:        
         killPlayProcess()
@@ -2438,16 +2634,16 @@ def setProgramAsRunning():
                     os.mkdir("Music")
                     os.chdir('Music')
                 try:
-                    if(not(os.path.exists('running.lock'))):
-                        with open('running.lock', mode='a'): pass
-                    if(os.path.exists('show.lock')):
+                    if(not(os.path.exists(os.path.expanduser('~')+'/.SomePythonThings/Music/running.lock'))):
+                        with open(os.path.expanduser('~')+'/.SomePythonThings/Music/running.lock', mode='a'): pass
+                    if(os.path.exists(os.path.expanduser('~')+'/.SomePythonThings/Music/show.lock')):
                         log('[        ] Showing SomePythonThimgs Music...')
                         try:
                             get_updater().call_in_main(music.show)
                             get_updater().call_in_main(music.raise_)
                             get_updater().call_in_main(music.activateWindow)
                             get_updater().call_in_main(music.showNormal)
-                            os.remove('show.lock')
+                            os.remove(os.path.expanduser('~')+'/.SomePythonThings/Music/show.lock')
                             time.sleep(0.1)
                             log('[        ] Searching for passed args...')
                             try:
@@ -2463,7 +2659,7 @@ def setProgramAsRunning():
                             break
                         except:
                             try:
-                                os.remove('show.lock')
+                                os.remove(os.path.expanduser('~')+'/.SomePythonThings/Music/show.lock')
                             except PermissionError:
                                 pass
                 except Exception as e:
@@ -2477,6 +2673,7 @@ def setProgramAsRunning():
 
 def on_key(key):
     global volume, sliders
+    log(f"[   OK   ] Key press event detected on window, key is {key}")
     if key == QtCore.Qt.Key_Space:
         toPlay(finalized=False)
     elif key == QtCore.Qt.Key_Minus:
@@ -2493,20 +2690,47 @@ def on_key(key):
         removeFromPlaylist()
     elif key == QtCore.Qt.Key_Enter:
         goToSong()
-    elif key == QtCore.Qt.Key_Play:
-        toPlay()
-    elif key == QtCore.Qt.Key_Pause:
-        toPlay()
-    elif key == QtCore.Qt.Key_MediaPlay:
-        toPlay()
-    elif key == QtCore.Qt.Key_MediaPause:
-        toPlay()
-    elif key == QtCore.Qt.Key_MediaPrevious:
-        toGoBack()
-    elif key == QtCore.Qt.Key_MediaNext:
-        toSkip()
+    #elif key == QtCore.Qt.Key_Play:
+    #    toPlay()
+    #elif key == QtCore.Qt.Key_Pause:
+    #    toPlay()
+    #elif key == QtCore.Qt.Key_MediaPlay:
+    #    toPlay()
+    #elif key == QtCore.Qt.Key_MediaPause:
+    #    toPlay()
+    #elif key == QtCore.Qt.Key_MediaPrevious:
+    #    toGoBack()
+    #elif key == QtCore.Qt.Key_MediaNext:
+    #    toSkip()
     #else:
     #   log('key pressed: %i' % key)
+
+def mediaKeyPress(key):
+    if key == pynput.keyboard.Key.media_play_pause:
+        log(f"[   OK   ] Pynput key press detected, key is \"{key}\"")
+        get_updater().call_in_main(toPlay)
+        get_updater().call_in_main(showMediaWindow)
+        if(_platform=='darwin'):
+            killallmusicinstances()
+    elif key == pynput.keyboard.Key.media_previous:
+        log(f"[   OK   ] Pynput key press detected, key is \"{key}\"")
+        get_updater().call_in_main(toGoBack)
+        get_updater().call_in_main(showMediaWindow, skip=True)
+        if(_platform=='darwin'):
+            killallmusicinstances()
+    elif key == pynput.keyboard.Key.media_next:
+        log(f"[   OK   ] Pynput key press detected, key is \"{key}\"")
+        get_updater().call_in_main(toSkip)
+        get_updater().call_in_main(showMediaWindow, skip=True)
+        if(_platform=='darwin'):
+            killallmusicinstances()
+
+
+def killallmusicinstances():
+    log("[        ] Killing Music.app instances...")
+    for _ in range(10):
+        os.system('killall Music')
+        time.sleep(0.1)
 
 def resizeWidgets():
     global music, buttons, texts, progressbars, font
@@ -2683,8 +2907,13 @@ if __name__ == '__main__':
                 log("[        ] Minimizing to system tray...")
                 event.ignore()
             else:
-                event.accept()
-                forceClose = False
+                if(not(forceClose)):
+                    killPlayProcess()
+                    event.accept()
+                    sys.exit()
+                else:
+                    event.accept()
+                    forceClose = False
         
         def eventFilter(self, object, event):
             try:
@@ -2707,7 +2936,7 @@ if __name__ == '__main__':
             
         def resizeEvent(self, event):
             self.resized.emit()
-            return super(Window, self).resizeEvent(event)
+            return super(ClosableWindow, self).resizeEvent(event)
 
         def keyReleaseEvent(self, event):
             log('[ EVENTS ] keyRelease activated.')
@@ -2720,7 +2949,7 @@ if __name__ == '__main__':
                 buttons['first-track'].clearFocus()
                 sliders['volume'].clearFocus()
                 seeker.clearFocus()
-                super(Window, self).keyReleaseEvent(event)
+                super(ClosableWindow, self).keyReleaseEvent(event)
                 self.keyRelease.emit(event.key())
         
         def _focusInEvent(self):
@@ -2741,6 +2970,8 @@ if __name__ == '__main__':
             self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
             self.setDropIndicatorShown(True)
             self.setAcceptDrops(True)
+            self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            self.customContextMenuRequested.connect(self.showMenu)
             self.setSupportedDropActions = QtCore.Qt.CopyAction | QtCore.Qt.MoveAction
 
         def dragEnterEvent(self, e):
@@ -2756,6 +2987,30 @@ if __name__ == '__main__':
                         file = file[1:]
                 if(file != ""):
                     addFile(str(file))
+                
+        def showMenu(self, pos: QtCore.QPoint):
+            x = 0
+            x += music.pos().x()
+            x += self.pos().x()
+            x += pos.x()
+            x += 5 # padding
+            y = 0
+            y += music.pos().y()
+            y += self.pos().y()
+            y += pos.y()
+            y += self.header().height()
+            y += self.header().height()
+            y += 10 # padding
+            log(f"[        ] Showing menu at {x}x{y}")
+            menu = QtWidgets.QMenu(music)
+            menu.move(x, y)
+            deleteAction = QtWidgets.QAction("Remove from playlist")
+            deleteAction.triggered.connect(removeFromPlaylist)
+            menu.addAction(deleteAction)
+            removeAction = QtWidgets.QAction("Remove from computer")
+            removeAction.triggered.connect(removeFromComputer)
+            menu.addAction(removeAction)
+            menu.exec_()
 
     class KillableThread(Thread): 
         def __init__(self, *args, **keywords): 
@@ -2851,6 +3106,7 @@ if __name__ == '__main__':
         buttons['last-track'].clicked.connect(toSkip)
         buttons['first-track'].clicked.connect(toGoBack)
 
+
         buttons['delete'] = QtWidgets.QPushButton(music)
         buttons['delete'].setText('Remove from playlist')
         buttons['delete'].clicked.connect(removeFromPlaylist)
@@ -2888,6 +3144,18 @@ if __name__ == '__main__':
         sliders['volume'].setMaximum(100)
         sliders['volume'].setValue(volume)
         sliders['volume'].valueChanged.connect(changeVolume)
+
+        buttons['shuffle'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['replay'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['play'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['audio'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['last-track'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['first-track'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['delete'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['add'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['save'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['youtube'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['open'].setFocusPolicy(QtCore.Qt.NoFocus)
 
         seeker = NonScrollableSlider(QtCore.Qt.Horizontal, music)
         seeker.setMinimum(0)
@@ -2943,26 +3211,22 @@ if __name__ == '__main__':
 
 
         fileMenu = menuBar.addMenu("File")
-        openAction = QtWidgets.QAction("Open     ", music)
-        openAction.triggered.connect(openFile)
-        fileMenu.addAction(openAction)
-        quitAction = QtWidgets.QAction("Quit     ", music)
-        quitAction.triggered.connect(quitMusic)
-        fileMenu.addAction(quitAction)
         hideMusicAction = QtWidgets.QAction("Hide     ", music)
+        hideMusicAction.setShortcut("Ctrl+H")
         hideMusicAction.triggered.connect(music.hide)
         fileMenu.addAction(hideMusicAction)
+        quitAction = QtWidgets.QAction("Quit     ", music)
+        quitAction.triggered.connect(quitMusic)
+        quitAction.setShortcut("Ctrl+Q")
+        fileMenu.addAction(quitAction)
 
         fileMenu = trayMenu.addMenu("File")
-        openAction = QtWidgets.QAction("Open     ", music)
-        openAction.triggered.connect(openFile)
-        fileMenu.addAction(openAction)
-        quitAction = QtWidgets.QAction("Quit     ", music)
-        quitAction.triggered.connect(quitMusic)
-        fileMenu.addAction(quitAction)
         hideMusicAction = QtWidgets.QAction("Hide     ", music)
         hideMusicAction.triggered.connect(music.hide)
         fileMenu.addAction(hideMusicAction)
+        quitAction = QtWidgets.QAction("Quit     ", music)
+        quitAction.triggered.connect(quitMusic)
+        fileMenu.addAction(quitAction)
 
 
         playbackMenu = menuBar.addMenu("Playback")
@@ -3088,6 +3352,9 @@ if __name__ == '__main__':
         logAction = QtWidgets.QAction(" Open Log", music)
         logAction.triggered.connect(openLog)
         settingsMenu.addAction(logAction)
+        logAction = QtWidgets.QAction(" Reinstall SomePythonThigs Music", music)
+        logAction.triggered.connect(partial(checkUpdates_py, True))
+        settingsMenu.addAction(logAction)
         openSettingsAction = QtWidgets.QAction(" Settings...    ", music)
         openSettingsAction.triggered.connect(openSettingsWindow)
         settingsMenu.addAction(openSettingsAction)
@@ -3121,6 +3388,15 @@ if __name__ == '__main__':
         quitMusicAction = QtWidgets.QAction("Quit SomePythonThigs Music ", music)
         quitMusicAction.triggered.connect(quitMusic)
         trayMenu.addAction(quitMusicAction)
+
+        log("[        ] Starting Pynput keyboard thread...")
+        if(_platform=='darwin'):
+            if(settings["alertOfKeyboardControl"]):
+                throw_info("SomePythonThings Music", "In order to be able to monitor the media keys (Play, pause, skip, previous, etc.), due to PySide2 limitations, you will need to allow SomePythonThings Music to recieve other applications key presses on System Preferences.")
+                settings["alertOfKeyboardControl"] = False
+                saveSettings(silent=False, minimize_to_tray=settings['minimize_to_tray'], bakcgroundPicture=settings['bakcgroundPicture'], mode=settings['mode'], volume=settings['volume'], showTrackNotification=settings['showTrackNotification'], showEndNotification=settings['showEndNotification'],loadLibraryAtStartup=settings["loadLibraryAtStartup"], repeatByDefault=settings["repeatByDefault"], shuffleByDefault=settings["shuffleByDefault"])
+        pynput.keyboard.Listener(on_press=mediaKeyPress).start()
+
         if(len(sys.argv)>1):
             if('runanyway' in sys.argv[1].lower()):
                 goRun=True
@@ -3176,6 +3452,14 @@ if __name__ == '__main__':
                         i += 1
             if(isThereAFile):
                 toStrictlyPlay()
+            else:
+                if(settings['loadLibraryAtStartup']):
+                    log("[   OK   ] No file detected, loading library...")
+                    load_library()
+            if(settings["shuffleByDefault"]):
+                toShuffle()
+            if(settings["repeatByDefault"]):
+                toReplay()
             app.exec_()
         else:
             tray.setVisible(False)
