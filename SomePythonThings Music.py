@@ -1,6 +1,9 @@
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ------------------------------------------------------------------------------- Required Modules ------------------------------------------------------------------------------ #
 import os
+
+os.environ["QT_MAC_WANTS_LAYER"] = "1"
+
 import re
 import sys
 import time
@@ -32,7 +35,7 @@ from youtubesearchpython import VideosSearch
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ------------------------------------------------------------------------------------ Globals ---------------------------------------------------------------------------------- #
 debugging = False
-actualVersion = 2.1
+actualVersion = 2.2
 
 music_files = ('Common Media Files (*.wav; *.mp3; *.pcm; *.aiff; *.aac; *.ogg; *.wma; *.flac);;Other media files (*.*)')
 music_extensions = ['*.wav', '*.mp3', '*.pcm', '*.aiff', '*.aac', '*.ogg', '*.wma', '*.flac']
@@ -70,10 +73,12 @@ playingObj = None
 volume = 100
 totalTime = 0
 passedTime = 0
-starttime = 0 
+starttime = 0
 song_length = 0
 elementNumber = 0
 trackNumber = 0
+currentTimeDelay = 0
+trackSeeked = 1
 
 background_picture_path = ''
 logHistory = ""
@@ -110,6 +115,10 @@ lightModeStyleSheet = """
     #centralwidget
     {{
         border-image: url(\"{1}\") 0 0 0 0 stretch stretch;
+    }}
+    QMessageBox
+    {{
+        background-color:#FFFFFF;
     }}
     QPushButton
     {{
@@ -274,6 +283,7 @@ lightModeStyleSheet = """
     {{
         selection-background-color: rgba(255, 255, 255, 0.4);
         border-radius: 3px;
+        padding-left: 5px;
         border: 1px solid rgb(255, 255, 255);
         background-color: rgba(255, 255, 255, 0.4);
         color: black;
@@ -759,6 +769,7 @@ darkModeStyleSheet = """
     {{
         selection-background-color: rgba(0, 0, 0, 0.4);
         border-radius: 3px;
+        padding-left: 5px;
         border: 1px solid rgb(0, 0, 0);
         background-color: rgba(0, 0, 0, 0.4);
         color: white;
@@ -987,7 +998,7 @@ if(True): # This conditional is only to be able to collapse the full updates blo
         log('[   OK   ] Reached downloadUpdates. Download links are "{0}"'.format(links))
         if _platform == 'linux' or _platform == 'linux2':  # If the OS is linux
             log("[   OK   ] platform is linux, starting auto-update...")
-            throw_info("SomePythonThings Updater", "The new version is going to be downloaded and installed automatically. \nThe installation time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nPlease DO NOT kill the program until the update is done, because it may corrupt the executable files.\nClick OK to start downloading.")
+            throw_info("SomePythonThings Updater", "The update is being downloaded. Please wait.")
             t = Thread(target=download_linux, args=(links,))
             t.daemon = True
             t.start()
@@ -999,13 +1010,15 @@ if(True): # This conditional is only to be able to collapse the full updates blo
             else:  # is os is not 64bits
                 url = (links['win32'])
             log(url)
-            get_updater().call_in_main(throw_info, "SomePythonThings Update", "The new version is going to be downloaded and prepared for the installation. \nThe download time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nClick OK to continue.")
+            
+            throw_info("SomePythonThings Updater", "The update is being downloaded. Please wait.")
             t = Thread(target=download_win, args=(url,))
             t.daemon=True
             t.start()
         elif _platform == 'darwin':
             log("[   OK   ] platform is macOS, starting auto-update...")
-            throw_info("SomePythonThings Updater", "The new version is going to be downloaded and installed automatically. \nThe installation time may vary depending on your internet connection and your computer's performance, but it shouldn't exceed a few minutes.\nPlease DO NOT kill the program until the update is done, because it may corrupt the executable files.\nClick OK to start downloading.")
+            
+            throw_info("SomePythonThings Updater", "The update is being downloaded. Please wait.")
             t = Thread(target=download_macOS, args=(links,))
             t.daemon=True
             t.start()
@@ -1037,7 +1050,7 @@ if(True): # This conditional is only to be able to collapse the full updates blo
     def launch_win(filename):
         try:
             installationProgressBar('Launching')
-            throw_info("SomePythonThings Music Updater", "The file has been downloaded successfully and the setup will start now. When clicking OK, the application will close and a User Account Control window will appear. Click Yes on the User Account Control Pop-up asking for permissions to launch SomePythonThings-Music-Updater.exe. Then follow the on-screen instructions.")
+            throw_info("SomePythonThings Zip Manager Updater", "The update has been downloaded and is going to be installed.\nYou may be prompted for permissions, click YES.\nClick OK to start installation")
             os.system('start /B {0} /silent'.format(filename))
             try:        
                 killPlayProcess()
@@ -1064,7 +1077,7 @@ if(True): # This conditional is only to be able to collapse the full updates blo
         installationProgressBar('Installing')
         time.sleep(0.2)
         if not again:
-            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "Please write your password to perform the update. \nThis password is NOT going to be stored anywhere in any way and it is going to be used ONLY for the update.\nIf you want, you can check that on the source code on github: \n(https://github.com/martinet101/SomePythonThings-Music/)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
+            passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "Please write your password to perform the update. (SomePythonThings Music needs SUDO access in order to be able to install the update)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
         else:
             passwd = str(QtWidgets.QInputDialog.getText(music, "Autentication needed - SomePythonThings Music", "An error occurred while autenticating. Insert your password again (This attempt will be the last one)\n\nPassword:", QtWidgets.QLineEdit.Password, '')[0])
         t = Thread(target=install_linux_part2, args=(passwd, again))
@@ -1078,7 +1091,7 @@ if(True): # This conditional is only to be able to collapse the full updates blo
             if(p2 != 0):  # If the downloaded file cannot be removed
                 log("[  WARN  ] Could not delete update file.")
             installationProgressBar('Installing')
-            get_updater().call_in_main(throw_info,"SomePythonThings Music Updater","The update has been applied succesfully. Please reopen the application")
+            get_updater().call_in_main(throw_info,"SomePythonThings Music Updater","The update has been applied succesfully. Please restart the application")
             try:        
                 killPlayProcess()
             except AttributeError:
@@ -1226,14 +1239,14 @@ def youtubeWindow():
             os.chdir(os.path.expanduser("~"))
             get_updater().call_in_main(dialog.setLabelText, f"Preparing things...")
             try:
-                os.chdir("SomePythonThings Music")
+                os.chdir(os.path.expanduser("~")+"/SomePythonThings Music")
                 log("[   OK   ] Acessed \"~/SomePythonThings Music\"")
             except FileNotFoundError:
-                os.mkdir("SomePythonThings Music")
+                os.mkdir(os.path.expanduser("~")+"/SomePythonThings Music")
                 log("[  WARN  ] \"~/SomePythonThings Music\" not found, creating it...")
-                os.chdir("SomePythonThings Music")
+                os.chdir(os.path.expanduser("~")+"/SomePythonThings Music")
 
-            output_path = os.getcwd().replace("\\", "/")
+            output_path = os.path.expanduser("~")+"/SomePythonThings Music".replace("\\", "/")
             log("[   OK   ] Output path is "+output_path)
 
             get_updater().call_in_main(dialog.setLabelText, f"Fetching \"{name}\" links...")
@@ -1357,8 +1370,8 @@ def showMediaWindow(skip=False):
                 get_updater().call_in_main(art.setPixmap, albumArt.pixmap())
                 get_updater().call_in_main(title.setText, labels['songname'].text())
                 try:
-                    get_updater().call_in_main(backgroundBar.setValue, int(playProcess.position()/playProcess.duration()*1000))
-                    get_updater().call_in_main(slider.setValue, int(playProcess.position()/playProcess.duration()*1000))
+                    get_updater().call_in_main(backgroundBar.setValue, int(playProcess.position()//trackSeeked/song_length))
+                    get_updater().call_in_main(slider.setValue, int(playProcess.position()//trackSeeked/song_length))
                 except ZeroDivisionError:
                     get_updater().call_in_main(backgroundBar.setValue, 0)
                     get_updater().call_in_main(slider.setValue, 0)
@@ -1371,8 +1384,8 @@ def showMediaWindow(skip=False):
             get_updater().call_in_main(art.setPixmap, albumArt.pixmap())
             get_updater().call_in_main(title.setText, labels['songname'].text())
             try:
-                get_updater().call_in_main(backgroundBar.setValue, int(playProcess.position()/playProcess.duration()*1000))
-                get_updater().call_in_main(slider.setValue, int(playProcess.position()/playProcess.duration()*1000))
+                get_updater().call_in_main(backgroundBar.setValue, int(playProcess.position()//trackSeeked/song_length))
+                get_updater().call_in_main(slider.setValue, int(playProcess.position()//trackSeeked/song_length))
             except ZeroDivisionError:
                 get_updater().call_in_main(backgroundBar.setValue, 0)
                 get_updater().call_in_main(slider.setValue, 0)
@@ -1405,7 +1418,7 @@ def showMediaWindow(skip=False):
         backgroundBar.setMinimum(0)
         backgroundBar.setMaximum(1000)
         try:
-            backgroundBar.setValue(int(playProcess.position()/playProcess.duration()*1000))
+            backgroundBar.setValue(int(playProcess.position()//trackSeeked/song_length))
         except ZeroDivisionError:
             backgroundBar.setValue(0)
         backgroundBar.move(0, 0)
@@ -1419,7 +1432,7 @@ def showMediaWindow(skip=False):
         slider = NonScrollableSlider(QtCore.Qt.Horizontal, banner)
         slider.setRange(0, 1000)
         try:
-            slider.setValue(int(playProcess.position()/playProcess.duration()*1000))
+            slider.setValue(int(playProcess.position()//trackSeeked/song_length))
         except ZeroDivisionError:
             slider.setValue(0)
         slider.setEnabled(False)
@@ -1527,6 +1540,7 @@ def playFile(file, passedTime=0):
     else: 
         filePreset="file://"
 
+    playProcess.stop()
     playProcess.setMedia(QtCore.QUrl(filePreset+file))
     playProcess.setPosition(int(passedTime*1000))
     playProcess.setVolume(_volume)
@@ -2074,7 +2088,7 @@ def getSongTitle(file):
     return name.replace("U0026", "&")
 
 def startPlayback(track=0):
-    global labels, skipped, playerIsRunning, fileBeingPlayed, playProcess, goBack, playing, trackNumber, replay, blockPlay, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime, song_length
+    global labels, skipped, playerIsRunning, song_length, fileBeingPlayed, trackSeeked, playProcess, goBack, playing, trackNumber, replay, blockPlay, playingObj, justContinue, totalTime, passedTime, seeking, seekerValueManuallyChanged, starttime
     playerIsRunning = True
     stopped=False
     skipped=False
@@ -2108,6 +2122,7 @@ def startPlayback(track=0):
                 song_length = getLenght(track)
                 filename = getSongTitle(track)
                 fileBeingPlayed = track
+                log('[        ] Actual track lenght is '+str(song_length))
                 get_updater().call_in_main(labels['totaltime'].setText, str(datetime.timedelta(seconds=int(song_length))))
                 get_updater().call_latest(labels['songname'].setText, filename)
 
@@ -2127,8 +2142,7 @@ def startPlayback(track=0):
                 blockPlay = True
                 get_updater().call_in_main(playFile, track, passedTime=passedTime)
                 while blockPlay:
-                    pass
-
+                    time.sleep(0.01)
                 log("[   OK   ] Continuing play process, play line passed")
 
                 alreadyPlayed.append(trackNumber)
@@ -2137,20 +2151,35 @@ def startPlayback(track=0):
                     WindowPlayButton.setIcon(QtGui.QIcon(realpath+"/icons-sptmusic/pause-bar.ico"))
                 get_updater().call_in_main(toStyleMainList)
 
+                while song_length == 0:
+                    time.sleep(0.01)
+
                 msPlayed = 0
-                lenght = getLenght(track)*1000
+                lenght = song_length
                 percentagePlayed = 0
+                trackSeeked = 1
 
                 while(True):
-                    msPlayed = playProcess.position()
+                    #msPlayed = playProcess.position()//2
+                    #lenght = song_length
+                    msPlayed = playProcess.position()//trackSeeked
+                    lenght = song_length*1000
                     if(lenght!=0):
+                        #percentagePlayed = (msPlayed)/lenght/5
                         percentagePlayed = msPlayed/lenght*100
+                        log(f"[   Ok   ] Played {percentagePlayed}%")
                     loopStartTime = time.time()
-                    get_updater().call_in_main(labels['actualtime'].setText, str(datetime.timedelta(seconds=int(msPlayed/1000))))
+                    
+                    try:
+                        get_updater().call_in_main(labels['actualtime'].setText, str(datetime.timedelta(seconds=int(msPlayed/1000))))
+                        #get_updater().call_in_main(labels['actualtime'].setText, str(datetime.timedelta(seconds=int(msPlayed/500))))
+                    except ZeroDivisionError:
+                        pass
 
                     if(seeking):
                         seekerValueManuallyChanged = False
                         refreshProgressbar(percentagePlayed*10)
+                        #refreshProgressbar(percentagePlayed*5)
 
 
                     if(not(playing)):
@@ -2158,7 +2187,7 @@ def startPlayback(track=0):
                         get_updater().call_in_main(toStyleMainList)
                         log('[   OK   ] Paused at moment {}'.format((time.time()-starttime)))
                         while not(playing):
-                            time.sleep(0.01)# if "pass" statement here, cpu will run at full speed (qua core systems at 25%, dual core at 50%, etc.) until play button was hitted.
+                            time.sleep(0.01)# if "pass" statement here, cpu would run at full speed until play button was hitted.
                         albumArt.setPixmap(QtWidgets.QFileIconProvider().icon(QtCore.QFileInfo(track)).pixmap(256, 256).scaledToHeight(96, QtCore.Qt.SmoothTransformation))
                         log('[        ] Continuing playback...')
                         playProcess.play()
@@ -2264,12 +2293,13 @@ def startPlayback(track=0):
             raise e
 
 def goToSong():
-    global lists, trackNumber, playing, t, playerIsRunning, justContinue
+    global lists, trackNumber, playing, t, playerIsRunning, justContinue, searchBar
     try:
         t.shouldBeRuning = False
         log('[  KILL  ] Killing playback thread to start a new one...')
     except AttributeError:
         log('[  WARN  ] Unable to kill thread, thread was not running...')
+    searchBar.setText('')
     trackNumber = mainList.indexOfTopLevelItem(mainList.currentItem())
     if(trackNumber<0):
         trackNumber = 0
@@ -2278,25 +2308,16 @@ def goToSong():
     playing = False
     toStrictlyPlay(track=trackNumber)
 
-def goToMaybeSpecificTime():
-    global sliders, totalTime, passedTime, justContinue, seeking, seekerValueManuallyChanged, starttime, song_length
-    if(seekerValueManuallyChanged):
-        timeToGo = seeker.value()*(song_length)/1000
-        log('[        ] Starting goToSpecificTime with time value : '+str(timeToGo))
-        justContinue = True
-        passedTime=timeToGo
-        seekerValueManuallyChanged = False
-    else:
-        seekerValueManuallyChanged = True
-
 def goToSpecificTime():
-    global sliders, totalTime, passedTime, justContinue, seeking, seekerValueManuallyChanged, starttime, song_length
-    timeToGo = seeker.value()*(song_length)
-    log('[        ] Starting goToSpecificTime with time value (in ms): '+str(timeToGo))
-    playProcess.setPosition(int(timeToGo))
+    global trackSeeked
+    timeToGo = seeker.value()*(song_length*1000)/1000
+    print(seeker.value())
+    print(playProcess.position()//trackSeeked)
+    if(_platform=='win32'):
+        trackSeeked = 1+seeker.value()/1000
+    log('[        ] Starting goToSpecificTime with time value (in ms): '+str(timeToGo)+', currentTimeDelay = '+str(currentTimeDelay))
+    playProcess.setPosition(int(timeToGo*trackSeeked))#-currentTimeDelay))
     startSeeking()
-    passedTime = playProcess.position()/1000
-    seekerValueManuallyChanged = False
 
 def stopSeeking():
     log('[        ] Stopping seeking...')
@@ -2526,7 +2547,7 @@ def quitMusic():
         killPlayProcess()
     except AttributeError:
         pass
-    sys.exit()
+    sys.exit(0)
 
 def checkDirectUpdates():
     global actualVersion
@@ -2684,12 +2705,12 @@ def on_key(key):
         seeker.setValue(seeker.value()-10)
     elif key == QtCore.Qt.Key_Right:
         seeker.setValue(seeker.value()+10)
-    elif key == QtCore.Qt.Key_Backspace:
-        removeFromPlaylist()
-    elif key == QtCore.Qt.Key_Delete:
-        removeFromPlaylist()
-    elif key == QtCore.Qt.Key_Enter:
-        goToSong()
+    #elif key == QtCore.Qt.Key_Backspace:
+    #    removeFromPlaylist()
+    #elif key == QtCore.Qt.Key_Delete:
+    #    removeFromPlaylist()
+    #elif key == QtCore.Qt.Key_Enter:
+    #    goToSong()
     #elif key == QtCore.Qt.Key_Play:
     #    toPlay()
     #elif key == QtCore.Qt.Key_Pause:
@@ -2777,8 +2798,11 @@ def resizeWidgets():
     labels['songname'].resize(width-250-int((width/2)-20)-50, 30)
     labels['songname'].move(120, height-100)
 
-    mainList.move(170, 40)
-    mainList.resize(width-190, height-180)
+    searchBar.move(170, 40)
+    searchBar.resize(width-190, 30)
+
+    mainList.move(170, 80)
+    mainList.resize(width-190, height-220)
 
     log("[   OK   ] Resizing content to fit "+str(width)+'x'+str(height))
     bottomBar.resize(width, 120)
@@ -2788,7 +2812,7 @@ def openLibrary():
     openOnExplorer(os.path.expanduser("~").replace("\\", '/')+"/SomePythonThings Music/", force=True)
 
 def load_library():
-    global music_extensions, log, addFile
+    global music_extensions
     try:
         os.chdir(os.path.expanduser("~"))
         os.chdir("SomePythonThings Music")
@@ -2799,7 +2823,17 @@ def load_library():
                 addFile(os.path.abspath(file))
     except FileNotFoundError:
         pass
-    
+
+def searchOnLibrary():
+    global searchBar, mainList
+    resultsFound = mainList.findItems(searchBar.text(), QtCore.Qt.MatchContains, 0)
+    log(f"[   OK   ] Searching for string \"{searchBar.text()}\"")
+    for item in mainList.findItems('', QtCore.Qt.MatchContains, 0):
+        if not(item in resultsFound):
+            item.setHidden(True)
+        else:
+            item.setHidden(False)
+
 
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ---------------------------------------------------------------------------------- Main Code ---------------------------------------------------------------------------------- #
@@ -2855,6 +2889,24 @@ if __name__ == '__main__':
 
     background_picture_path='{0}/background-sptmusic.jpg'.format(realpath.replace('c:', 'C:'))
     black_picture_path='{0}/black-sptmusic.png'.format(realpath.replace('c:', 'C:'))
+    class MainApplication(QtWidgets.QApplication):
+        def __init__(self, parent):
+            super(MainApplication, self).__init__(parent)
+            self.installEventFilter(self)
+            self._prevAppState = QtCore.Qt.ApplicationActive
+        
+        def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent):
+            if (watched == self and event.type() == QtCore.QEvent.ApplicationStateChange):
+                ev = QtGui.QGuiApplication.applicationState()
+                if (self._prevAppState == QtCore.Qt.ApplicationActive and ev == QtCore.Qt.ApplicationActive):
+                    if(_platform=="darwin"):
+                        log("[   OK   ] Dock icon clicked, showing...")
+                        showMusic()
+                self._prevAppState = ev
+    
+            
+            return super().eventFilter(watched, event)
+
     class Ui_MainWindow(object):
         def setupUi(self, MainWindow):
             global background_picture_path
@@ -2909,8 +2961,9 @@ if __name__ == '__main__':
             else:
                 if(not(forceClose)):
                     killPlayProcess()
+                    time.sleep(0.1)
                     event.accept()
-                    sys.exit()
+                    sys.exit(0)
                 else:
                     event.accept()
                     forceClose = False
@@ -3004,12 +3057,15 @@ if __name__ == '__main__':
             log(f"[        ] Showing menu at {x}x{y}")
             menu = QtWidgets.QMenu(music)
             menu.move(x, y)
+            menu.addSeparator()
             deleteAction = QtWidgets.QAction("Remove from playlist")
             deleteAction.triggered.connect(removeFromPlaylist)
             menu.addAction(deleteAction)
             removeAction = QtWidgets.QAction("Remove from computer")
             removeAction.triggered.connect(removeFromComputer)
             menu.addAction(removeAction)
+            menu.addSeparator()
+
             menu.exec_()
 
     class KillableThread(Thread): 
@@ -3047,7 +3103,7 @@ if __name__ == '__main__':
             event.ignore()
 
     QtWidgets.QApplication.setStyle('fusion')
-    app = QtWidgets.QApplication(sys.argv)
+    app = MainApplication(sys.argv)
     QtWidgets.QApplication.setStyle('fusion')
     music = Window()
     music.keyRelease.connect(on_key)
@@ -3099,6 +3155,7 @@ if __name__ == '__main__':
         buttons['play'].setStyleSheet("QPushButton{background-color: rgba(255, 255, 255, 0.8); border-radius: 25px; border-image: url(\""+realpath+"/icons-sptmusic/play-icon.svg\") 0 0 0 0 stretch stretch} QPushButton:checked{background-color: rgba(00, 130, 130, 1.0);}")
     
 
+
         buttons['shuffle'].clicked.connect(toShuffle)
         buttons['replay'].clicked.connect(toReplay)
         buttons['play'].clicked.connect(toPlay)
@@ -3145,18 +3202,8 @@ if __name__ == '__main__':
         sliders['volume'].setValue(volume)
         sliders['volume'].valueChanged.connect(changeVolume)
 
-        buttons['shuffle'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['replay'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['play'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['audio'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['last-track'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['first-track'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['delete'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['add'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['save'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['youtube'].setFocusPolicy(QtCore.Qt.NoFocus)
-        buttons['open'].setFocusPolicy(QtCore.Qt.NoFocus)
-
+        
+        
         seeker = NonScrollableSlider(QtCore.Qt.Horizontal, music)
         seeker.setMinimum(0)
         seeker.setMaximum(1000)
@@ -3172,6 +3219,20 @@ if __name__ == '__main__':
         labels['songname'] = QtWidgets.QLabel(music)
         labels['songname'].setText('No music playing')
         labels['songname'].setAlignment(QtCore.Qt.AlignLeft)
+
+        buttons['shuffle'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['replay'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['play'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['audio'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['last-track'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['first-track'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['delete'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['add'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['save'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['youtube'].setFocusPolicy(QtCore.Qt.NoFocus)
+        buttons['open'].setFocusPolicy(QtCore.Qt.NoFocus)
+        seeker.setFocusPolicy(QtCore.Qt.NoFocus)
+        sliders['volume'].setFocusPolicy(QtCore.Qt.NoFocus)
 
         albumArt = QtWidgets.QLabel(music)
         albumArt.resize(96, 96)
@@ -3190,13 +3251,17 @@ if __name__ == '__main__':
         mainList.setFocusPolicy(QtCore.Qt.NoFocus)
         mainList.setIconSize(QtCore.QSize(24, 24))
         mainList.setSortingEnabled(True)
+        mainList.setSelectionMode(QtWidgets.QTreeWidget.SingleSelection)
         mainList.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
         mainList.setVerticalScrollMode(QtWidgets.QTreeWidget.ScrollPerPixel)
         mainList.setHorizontalScrollMode(QtWidgets.QTreeWidget.ScrollPerPixel)
         mainList.itemDoubleClicked.connect(goToSong)
 
-        menuBar = music.menuBar()
-        menuBar.setNativeMenuBar(False)
+        searchBar = QtWidgets.QLineEdit(music)
+        searchBar.textChanged.connect(searchOnLibrary)
+        searchBar.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        searchBar.setPlaceholderText("Filter...")
+
 
         
         icon = QtGui.QIcon("{0}/icon-sptmusic.png".format(realpath))
@@ -3209,6 +3274,8 @@ if __name__ == '__main__':
         tray.messageClicked.connect(showMusic)
         tray.activated.connect(showMusic)
 
+        menuBar = music.menuBar()
+        menuBar.setNativeMenuBar(False)
 
         fileMenu = menuBar.addMenu("File")
         hideMusicAction = QtWidgets.QAction("Hide     ", music)
@@ -3352,9 +3419,9 @@ if __name__ == '__main__':
         logAction = QtWidgets.QAction(" Open Log", music)
         logAction.triggered.connect(openLog)
         settingsMenu.addAction(logAction)
-        logAction = QtWidgets.QAction(" Reinstall SomePythonThigs Music", music)
-        logAction.triggered.connect(partial(checkUpdates_py, True))
-        settingsMenu.addAction(logAction)
+        reinstallAction = QtWidgets.QAction(" Reinstall SomePythonThigs Music   ", music)
+        reinstallAction.triggered.connect(partial(checkUpdates_py, True))
+        settingsMenu.addAction(reinstallAction)
         openSettingsAction = QtWidgets.QAction(" Settings...    ", music)
         openSettingsAction.triggered.connect(openSettingsWindow)
         settingsMenu.addAction(openSettingsAction)
@@ -3388,6 +3455,50 @@ if __name__ == '__main__':
         quitMusicAction = QtWidgets.QAction("Quit SomePythonThigs Music ", music)
         quitMusicAction.triggered.connect(quitMusic)
         trayMenu.addAction(quitMusicAction)
+
+        if(_platform=='darwin'):
+            newMenuBar = QtWidgets.QMenuBar(music)
+            newMenuBar.setNativeMenuBar(True)
+
+            fileMenu = newMenuBar.addMenu("File")
+            fileMenu.addAction(hideMusicAction)
+            fileMenu.addAction(quitAction)
+
+            playbackMenu = newMenuBar.addMenu("Playback")
+            volumeMenu = playbackMenu.addMenu("Volume    ")
+            volumeMenu.addAction(increaseAction)
+            volumeMenu.addAction(decreaseAction)
+            volumeMenu.addAction(muteAction)
+            playbackMenu.addAction(playAction)
+            playbackMenu.addAction(pauseAction)
+            playbackMenu.addAction(nextSongAction)
+            playbackMenu.addAction(previousSongAction)
+            playbackMenu.addAction(shuffleAction)
+            playbackMenu.addAction(replayAction)
+
+            playlistMenu = newMenuBar.addMenu("Playlist")
+            playlistMenu.addAction(openFilesAction)
+            playlistMenu.addAction(deleteTrackAction)
+            playlistMenu.addAction(savePlaylistAction)
+            playlistMenu.addAction(openPlaylistAction)
+
+
+            libraryMenu = newMenuBar.addMenu("Library")
+            libraryMenu.addAction(openOnExplorerAction)
+            libraryMenu.addAction(loadTrackAction)
+
+            settingsMenu = newMenuBar.addMenu("Settings")
+            settingsMenu.addAction(logAction)
+            settingsMenu.addAction(reinstallAction)
+            settingsMenu.addAction(openSettingsAction)
+            defaultOpenSettingsAction = QtWidgets.QAction("Settings", music)
+            defaultOpenSettingsAction.triggered.connect(openSettingsWindow)
+            settingsMenu.addAction(defaultOpenSettingsAction)
+
+            helpMenu = newMenuBar.addMenu("Help")
+            helpMenu.addAction(openHelpAction)
+            helpMenu.addAction(updatesAction)
+            helpMenu.addAction(aboutAction)
 
         log("[        ] Starting Pynput keyboard thread...")
         if(_platform=='darwin'):
