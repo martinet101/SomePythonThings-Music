@@ -37,7 +37,7 @@ from youtubesearchpython import VideosSearch, Suggestions, ResultMode
 # ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 # ------------------------------------------------------------------------------------ Globals ---------------------------------------------------------------------------------- #
 debugging = False
-actualVersion = 2.0
+actualVersion = 3.0
 
 music_files = ('Common Media and Video Files (*.wav; *.mp3; *.pcm; *.aiff; *.aac; *.ogg; *.wma; *.flac; *.mp4; *.wmv);;Other compatible media files (*.*)')
 music_extensions = ['*.wav', '*.mp3', '*.pcm', '*.aiff', '*.aac', '*.ogg', '*.wma', '*.flac', "*.mp4"]
